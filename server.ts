@@ -464,7 +464,7 @@ app.get('/api/v1/nasa/live-cities', async (req, res) => {
 });
 
 // Live NASA Agroclimatology Crop Suitability & Upcoming Months Forecast Endpoint
-app.get('/api/v1/agro/crop-advisory', async (req, res) => {
+app.get(['/api/v1/agro/crop-advisory', '/api/crop-advisory'], async (req, res) => {
   try {
     const cityId = (req.query.city_id as string) || 'city_sukkur';
     const seasonMode = (req.query.season as string) || 'upcoming_6m'; // 'upcoming_6m' | 'rabi' | 'kharif'
@@ -476,10 +476,12 @@ app.get('/api/v1/agro/crop-advisory', async (req, res) => {
       ? `${cityObj.name}${cityObj.province ? `, ${cityObj.province}` : ''}`
       : `Coordinate (${lat.toFixed(2)}°N, ${lon.toFixed(2)}°E)`;
 
-    // Dynamically read today's exact live date (or optional custom date from query)
+    // Dynamically read today's exact live date (or optional custom month/year from query)
     const now = req.query.date ? new Date(req.query.date as string) : new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth() + 1; // 1..12
+    const currentYear = req.query.year ? parseInt(req.query.year as string, 10) : now.getFullYear();
+    const rawMonth = req.query.month !== undefined ? parseInt(req.query.month as string, 10) : undefined;
+    // Support 0-indexed (0..11) or 1-indexed (1..12) month parameters
+    const currentMonth = rawMonth !== undefined ? (rawMonth <= 11 ? rawMonth + 1 : rawMonth) : now.getMonth() + 1;
     const currentDay = now.getDate();
 
     const monthNames = [
@@ -1539,7 +1541,13 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start EarthSignal server:', err);
-  process.exit(1);
-});
+if (!process.env.VERCEL) {
+  startServer().catch((err) => {
+    console.error('Failed to start EarthSignal server:', err);
+    process.exit(1);
+  });
+}
+
+export { app };
+export default app;
+

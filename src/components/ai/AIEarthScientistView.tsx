@@ -1,20 +1,12 @@
 /**
- * EarthSignal — AI Earth Scientist View
- * Grounded conversational assistant explaining empirical findings using NASA data.
+ * EarthSignal — AI Earth Scientist & Grounded Research Briefing Console
+ * Asymmetric 12-Column Split:
+ * - Left 4 Columns: Active Empirical Telemetry Context Ledger & Curated Scientific Prompts
+ * - Right 8 Columns: Structured Research Briefing Transcript with Verified Telemetry Citations
  */
 
 import React, { useState } from 'react';
-import {
-  Sparkles,
-  Send,
-  HelpCircle,
-  Database,
-  CheckCircle2,
-  AlertTriangle,
-  MapPin,
-  Calendar,
-  Layers,
-} from 'lucide-react';
+import { Sparkles, Send, Compass, ShieldCheck } from 'lucide-react';
 import { StatisticalAnalysisResponse, AIAskResponse } from '../../types/earthsignal';
 
 interface AIEarthScientistViewProps {
@@ -37,18 +29,18 @@ export const AIEarthScientistView: React.FC<AIEarthScientistViewProps> = ({ anal
     {
       role: 'assistant',
       content: analysis
-        ? `Hello, I am the EarthSignal AI Earth Scientist. I am currently grounded on your active analysis of ${analysis.variable_name} for ${analysis.location.name} (${analysis.period.start} to ${analysis.period.end}). The empirical Sen's slope is ${analysis.slope_per_decade > 0 ? '+' : ''}${analysis.slope_per_decade} ${analysis.slope_unit} with a Mann-Kendall p-value of ${analysis.p_value.toFixed(5)} (${analysis.is_significant ? 'Statistically Significant' : 'Not Significant'}). Ask me any question about the scientific implications, statistical significance, or dataset limitations.`
-        : 'Hello, I am the EarthSignal AI Earth Scientist. Please select an environmental parameter and region in the Earth Explorer to provide empirical context for our discussion, or ask any general question about NASA Earth observation methodologies.',
+        ? `EarthSignal Research Console initialized. I am grounded on your active statistical audit of ${analysis.variable_name} for ${analysis.location.name} (${analysis.period.start} to ${analysis.period.end}). The empirical Theil-Sen median slope is ${analysis.slope_per_decade > 0 ? '+' : ''}${analysis.slope_per_decade} ${analysis.slope_unit} with a Mann-Kendall p-value of ${analysis.p_value.toFixed(5)} (${analysis.is_significant ? 'Statistically Confirmed' : 'Within Natural Variance'}). Ask any question regarding local atmospheric shifts, statistical significance, or crop adaptation.`
+        : 'EarthSignal Research Console initialized. Select a region or channel in the 3D Earth Map console to ground our briefing, or ask any question about regional climate trends and crop yield planning.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
 
   const sampleQuestions = [
-    'Is Sindh becoming hotter according to NASA data?',
+    'Is Sindh becoming hotter according to satellite data?',
     'What does the Mann-Kendall p-value signify in this analysis?',
     'How does Sen’s slope differ from standard linear regression?',
-    'What are the limitations and sensor uncertainties of this dataset?',
-    'Can this observed trend be directly attributed to climate change?',
+    'How does this warming trend affect wheat and cotton in Sindh?',
+    'What are the limitations of this dataset?',
   ];
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -87,12 +79,13 @@ export const AIEarthScientistView: React.FC<AIEarthScientistViewProps> = ({ anal
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
-    } catch (err: any) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: 'An error occurred while contacting the AI Earth Scientist service. Please verify server connectivity.',
+          content:
+            'An error occurred while communicating with the AI Scientist endpoint. Please verify server connectivity.',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -102,129 +95,176 @@ export const AIEarthScientistView: React.FC<AIEarthScientistViewProps> = ({ anal
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Header & Active Grounding Ribbon */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-mono text-cyan-600 dark:text-cyan-400 mb-1">
-              <Sparkles className="w-4 h-4" />
-              <span>EMPIRICALLY GROUNDED INTELLIGENCE</span>
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-              AI Earth Scientist
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Ask deep questions about detected trends. The AI is strictly constrained to empirical statistical calculations (Mann-Kendall, Sen’s slope) and documented NASA datasets.
-            </p>
-          </div>
-
-          {analysis && (
-            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl p-3 text-xs font-mono">
-              <div className="text-[10px] uppercase text-slate-400 mb-1 font-bold">
-                GROUNDING CONTEXT
-              </div>
-              <div className="text-slate-900 dark:text-white font-semibold">
-                {analysis.location.name} · {analysis.variable}
-              </div>
-              <div className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
-                Slope: {analysis.slope_per_decade > 0 ? '+' : ''}{analysis.slope_per_decade} {analysis.slope_unit} (p = {analysis.p_value.toFixed(4)})
-              </div>
-            </div>
-          )}
+    <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-10 py-8 space-y-6">
+      {/* Top Editorial Header */}
+      <div className="pb-5 border-b border-slate-200 dark:border-[#1E2638]">
+        <div className="flex items-center gap-2 text-xs font-mono text-cyan-600 dark:text-cyan-400 mb-1">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>EMPIRICALLY GROUNDED SCIENTIFIC BRIEFING CONSOLE</span>
         </div>
-
-        {/* Suggested Queries */}
-        <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-2">
-            Suggested Investigative Queries:
-          </span>
-          <div className="flex flex-wrap gap-2">
-            {sampleQuestions.map((q, idx) => (
-              <button
-                key={idx}
-                onClick={() => handleSendMessage(q)}
-                className="text-left text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-slate-700 dark:text-slate-300 hover:border-cyan-500 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        </div>
+        <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-950 dark:text-white">
+          AI Earth Scientist
+        </h1>
+        <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 max-w-3xl">
+          Every explanation is strictly anchored to verified Mann-Kendall rank statistics, Theil-Sen median slopes, and satellite observation records.
+        </p>
       </div>
 
-      {/* Conversation Thread */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs flex flex-col min-h-[480px]">
-        <div className="flex-1 space-y-4 overflow-y-auto mb-4 pr-1">
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex flex-col ${
-                msg.role === 'user' ? 'items-end' : 'items-start'
-              }`}
-            >
-              <div
-                className={`max-w-2xl rounded-xl p-4 text-sm leading-relaxed ${
-                  msg.role === 'user'
-                    ? 'bg-cyan-600 text-white rounded-br-none'
-                    : 'bg-slate-50 dark:bg-slate-800/80 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700/60 rounded-bl-none'
-                }`}
-              >
-                {/* Message Header */}
-                <div className="flex items-center justify-between gap-4 mb-2 pb-1 border-b border-black/10 dark:border-white/10 text-[11px]">
-                  <span className="font-semibold uppercase tracking-wider">
-                    {msg.role === 'user' ? 'Environmental Investigator' : 'AI Earth Scientist'}
+      {/* Main 12-Column Split Console */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left 4 Columns: Active Grounding Telemetry Context & Curated Queries */}
+        <div className="lg:col-span-4 space-y-5">
+          {analysis && (
+            <div className="bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-sm p-5 space-y-4">
+              <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-[#1E2638]">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-950 dark:text-white flex items-center gap-1.5">
+                  <Compass className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+                  <span>Grounding Telemetry</span>
+                </span>
+                <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
+                  ● Verified Context
+                </span>
+              </div>
+
+              <div className="divide-y divide-slate-100 dark:divide-[#1E2638] text-xs font-mono">
+                <div className="py-2 flex justify-between gap-2">
+                  <span className="text-slate-500">Target Region:</span>
+                  <span className="font-semibold text-slate-950 dark:text-white text-right">
+                    {analysis.location.name}
                   </span>
-                  <span className="opacity-75 font-mono">{msg.timestamp}</span>
                 </div>
-
-                <div className="whitespace-pre-line">{msg.content}</div>
-
-                {/* Grounded Facts Ribbon */}
-                {msg.groundedFacts && (
-                  <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 text-xs font-mono space-y-1 text-slate-600 dark:text-slate-300">
-                    <div className="text-[10px] uppercase font-bold text-cyan-600 dark:text-cyan-400">
-                      EMPIRICALLY VERIFIED GROUNDING:
-                    </div>
-                    <div>
-                      • Sen’s Slope: {msg.groundedFacts.slope_per_decade}
-                    </div>
-                    <div>
-                      • Mann-Kendall p-value: {msg.groundedFacts.p_value} ({msg.groundedFacts.is_significant ? 'Significant' : 'Not Significant'})
-                    </div>
-                    <div>• Dataset Cited: {msg.groundedFacts.dataset_cited}</div>
-                  </div>
-                )}
+                <div className="py-2 flex justify-between gap-2">
+                  <span className="text-slate-500">Coordinates:</span>
+                  <span className="tabular-nums text-slate-800 dark:text-slate-200">
+                    {analysis.location.latitude.toFixed(2)}°N, {analysis.location.longitude.toFixed(2)}°E
+                  </span>
+                </div>
+                <div className="py-2 flex justify-between gap-2">
+                  <span className="text-slate-500">Variable:</span>
+                  <span className="font-semibold text-cyan-600 dark:text-cyan-400">
+                    {analysis.variable} ({analysis.unit})
+                  </span>
+                </div>
+                <div className="py-2 flex justify-between gap-2">
+                  <span className="text-slate-500">Theil-Sen Slope:</span>
+                  <span className="tabular-nums font-bold text-slate-950 dark:text-white">
+                    {analysis.slope_per_decade > 0 ? '+' : ''}
+                    {analysis.slope_per_decade} {analysis.slope_unit}
+                  </span>
+                </div>
+                <div className="py-2 flex justify-between gap-2">
+                  <span className="text-slate-500">Mann-Kendall p:</span>
+                  <span className="tabular-nums text-slate-950 dark:text-white">
+                    {analysis.p_value.toFixed(5)} (Z = {analysis.mann_kendall.z_statistic.toFixed(2)})
+                  </span>
+                </div>
+                <div className="py-2 flex justify-between gap-2">
+                  <span className="text-slate-500">Sample Size:</span>
+                  <span className="tabular-nums text-slate-800 dark:text-slate-200">
+                    {analysis.sample_size} Monthly Passes
+                  </span>
+                </div>
               </div>
             </div>
-          ))}
-
-          {isLoading && (
-            <div className="flex items-center gap-2 text-xs text-slate-400 font-mono italic">
-              <div className="w-3.5 h-3.5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-              <span>AI Earth Scientist evaluating statistical invariants...</span>
-            </div>
           )}
+
+          {/* Suggested Scientific Queries */}
+          <div className="bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-sm p-5 space-y-3">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-950 dark:text-white pb-2 border-b border-slate-200 dark:border-[#1E2638]">
+              Research Briefing Prompts
+            </div>
+            <div className="space-y-2">
+              {sampleQuestions.map((q, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => handleSendMessage(q)}
+                  className="w-full text-left text-xs px-3 py-2.5 rounded-xs border border-slate-200 dark:border-[#1E2638] bg-slate-50 dark:bg-[#111622] text-slate-700 dark:text-slate-300 hover:border-cyan-500 dark:hover:border-cyan-400 hover:text-slate-950 dark:hover:text-white transition-colors"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* Input Bar */}
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3">
-          <input
-            type="text"
-            value={inputQuery}
-            onChange={(e) => setInputQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-            placeholder="Ask a scientific question about trends, significance, or NASA data..."
-            className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-          />
-          <button
-            onClick={() => handleSendMessage()}
-            disabled={isLoading || !inputQuery.trim()}
-            className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 shadow-sm whitespace-nowrap"
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>Send</span>
-          </button>
+        {/* Right 8 Columns: Research Transcript & Input Bar */}
+        <div className="lg:col-span-8 bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-sm p-6 flex flex-col min-h-[560px]">
+          <div className="flex-1 space-y-5 overflow-y-auto mb-5 pr-1">
+            {messages.map((msg, i) => (
+              <div
+                key={i}
+                className={`flex flex-col ${
+                  msg.role === 'user' ? 'items-end' : 'items-start'
+                }`}
+              >
+                <div
+                  className={`max-w-2xl rounded-sm p-4 sm:p-5 text-sm leading-relaxed ${
+                    msg.role === 'user'
+                      ? 'bg-slate-950 text-white dark:bg-cyan-500 dark:text-slate-950 font-medium'
+                      : 'bg-slate-50 dark:bg-[#111622] text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-[#1E2638]'
+                  }`}
+                >
+                  {/* Message Header */}
+                  <div className="flex items-center justify-between gap-4 mb-2.5 pb-1.5 border-b border-current/10 text-[11px] font-mono">
+                    <span className="font-bold uppercase tracking-wider">
+                      {msg.role === 'user' ? 'RESEARCH QUERY' : 'AI EARTH SCIENTIST'}
+                    </span>
+                    <span className="opacity-75 tabular-nums">{msg.timestamp}</span>
+                  </div>
+
+                  <div className="whitespace-pre-line">{msg.content}</div>
+
+                  {/* Grounded Facts Ribbon */}
+                  {msg.groundedFacts && (
+                    <div className="mt-4 pt-3 border-t border-slate-200 dark:border-[#1E2638] text-xs font-mono space-y-1 text-slate-600 dark:text-slate-400">
+                      <div className="text-[10px] uppercase font-bold text-cyan-600 dark:text-cyan-400 flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>VERIFIED TELEMETRY GROUNDING</span>
+                      </div>
+                      <div>• Theil-Sen Slope: {msg.groundedFacts.slope_per_decade}</div>
+                      <div>
+                        • Mann-Kendall p-value: {msg.groundedFacts.p_value} (
+                        {msg.groundedFacts.is_significant
+                          ? 'Confirmed Significant'
+                          : 'Not Significant'}
+                        )
+                      </div>
+                      <div>• Archive Source: {msg.groundedFacts.dataset_cited}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {isLoading && (
+              <div className="flex items-center gap-2.5 text-xs text-cyan-600 dark:text-cyan-400 font-mono">
+                <div className="w-4 h-4 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+                <span>Evaluating empirical series &amp; confidence intervals...</span>
+              </div>
+            )}
+          </div>
+
+          {/* Input Bar */}
+          <div className="pt-4 border-t border-slate-200 dark:border-[#1E2638] flex items-center gap-3">
+            <input
+              type="text"
+              value={inputQuery}
+              onChange={(e) => setInputQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+              placeholder="Ask a question about climate trends, Mann-Kendall significance, or crop yield planning..."
+              className="flex-1 bg-slate-50 dark:bg-[#111622] border border-slate-200 dark:border-[#1E2638] rounded-xs px-4 py-2.5 text-xs text-slate-950 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500"
+            />
+            <button
+              type="button"
+              onClick={() => handleSendMessage()}
+              disabled={isLoading || !inputQuery.trim()}
+              className="px-4 py-2.5 rounded-xs bg-slate-950 text-white hover:bg-slate-800 dark:bg-cyan-500 dark:text-slate-950 dark:hover:bg-cyan-400 disabled:opacity-50 font-semibold text-xs transition-colors flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Submit Query</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

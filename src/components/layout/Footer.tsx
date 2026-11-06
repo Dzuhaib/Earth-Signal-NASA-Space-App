@@ -1,78 +1,105 @@
 /**
- * EarthSignal — Clean, Simple Public Product Footer
+ * EarthSignal — Clean Minimal Footer
  */
 
 import React from 'react';
+import { Globe, Sun, Moon, FileDown } from 'lucide-react';
 import { NavTab } from './TopBar';
 
 interface FooterProps {
   onSelectTab: (tab: NavTab) => void;
+  onOpenReport: () => void;
+  isDark: boolean;
+  onToggleTheme: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onSelectTab }) => {
+export const Footer: React.FC<FooterProps> = ({
+  onSelectTab,
+  onOpenReport,
+  isDark,
+  onToggleTheme,
+}) => {
   return (
-    <footer className="w-full border-t border-slate-200 dark:border-slate-800/90 bg-slate-50 dark:bg-[#06080D] text-slate-600 dark:text-slate-400 transition-colors mt-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Top 12-Column Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-8 pb-10 border-b border-slate-200 dark:border-slate-800/80">
-          {/* Column 1: Product Summary (5 cols) */}
-          <div className="md:col-span-5 space-y-3">
-            <div className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
-              EarthSignal
-            </div>
-            <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400 max-w-sm">
-              Free tool to track temperature, rainfall, soil moisture, and crop yields across Pakistan and major cities worldwide using live NASA satellite data.
-            </p>
+    <footer className="border-t border-slate-200 dark:border-[#1E2638] bg-white dark:bg-[#07090E] text-slate-600 dark:text-slate-400 transition-colors mt-16">
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        {/* Brand */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-sm bg-slate-950 dark:bg-cyan-500 flex items-center justify-center text-white dark:text-slate-950">
+            <Globe className="w-4 h-4" />
           </div>
-
-          {/* Column 2: Quick Links (3 cols) */}
-          <div className="md:col-span-3 space-y-2.5">
-            <div className="text-xs font-semibold text-slate-900 dark:text-slate-200">
-              Explore
-            </div>
-            <ul className="space-y-2 text-xs">
-              {[
-                { id: 'overview', label: 'Home' },
-                { id: 'explorer', label: '3D Map' },
-                { id: 'crop-advisory', label: 'Crop Planner' },
-                { id: 'trends', label: 'Weather Trends' },
-                { id: 'comparison', label: 'Compare Cities' },
-                { id: 'ai-scientist', label: 'Ask Assistant' },
-              ].map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelectTab(item.id as NavTab)}
-                    className="text-slate-600 dark:text-slate-400 hover:text-slate-950 dark:hover:text-white transition-colors text-left"
-                  >
-                    {item.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Column 3: How It Works (4 cols) */}
-          <div className="md:col-span-4 space-y-2.5">
-            <div className="text-xs font-semibold text-slate-900 dark:text-slate-200">
-              How It Works
-            </div>
-            <div className="space-y-2 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              <p>
-                <span className="text-slate-900 dark:text-slate-200 font-medium">Live Satellite Data:</span>{' '}
-                Pulls monthly temperature, rain, and soil moisture records from 1981 to 2026.
-              </p>
-              <p>
-                <span className="text-slate-900 dark:text-slate-200 font-medium">Practical Insights:</span>{' '}
-                Shows how local weather is changing and which crops will perform best in the next 3 to 6 months.
-              </p>
-            </div>
-          </div>
+          <span className="font-display text-sm font-bold text-slate-950 dark:text-white">
+            EarthSignal
+          </span>
+          <span className="text-xs font-mono text-slate-500">
+            · Open Climate &amp; Crop Intelligence
+          </span>
         </div>
 
-        {/* Bottom Row */}
-        <div className="pt-6 flex items-center justify-between text-xs text-slate-500">
-          <div>EarthSignal — Free Climate &amp; Crop Planning Tool</div>
+        {/* Quick Links */}
+        <div className="flex flex-wrap items-center gap-4 text-xs font-medium">
+          <button
+            type="button"
+            onClick={() => onSelectTab('overview')}
+            className="hover:text-cyan-500 transition-colors cursor-pointer"
+          >
+            Overview
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectTab('explorer')}
+            className="hover:text-cyan-500 transition-colors cursor-pointer"
+          >
+            3D Map
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectTab('crop-advisory')}
+            className="hover:text-cyan-500 transition-colors cursor-pointer"
+          >
+            Crop Forecast
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectTab('trends')}
+            className="hover:text-cyan-500 transition-colors cursor-pointer"
+          >
+            Trend Audit
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectTab('comparison')}
+            className="hover:text-cyan-500 transition-colors cursor-pointer"
+          >
+            Compare
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectTab('ai-scientist')}
+            className="hover:text-cyan-500 transition-colors cursor-pointer"
+          >
+            AI Scientist
+          </button>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm border border-slate-200 dark:border-[#1E2638] bg-slate-50 dark:bg-[#0D111A] text-slate-700 dark:text-slate-300 text-xs font-mono cursor-pointer"
+          >
+            {isDark ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5" />}
+            <span>{isDark ? 'Light' : 'Dark'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenReport}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm bg-cyan-500 hover:bg-cyan-400 text-[#07090E] text-xs font-bold cursor-pointer"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            <span>Export PDF</span>
+          </button>
         </div>
       </div>
     </footer>

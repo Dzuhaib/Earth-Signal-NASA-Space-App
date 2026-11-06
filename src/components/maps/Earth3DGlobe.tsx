@@ -27,6 +27,7 @@ import {
   Tag,
 } from 'lucide-react';
 import { GeographicRegion, CityMarker, StatisticalAnalysisResponse } from '../../types/earthsignal';
+import { getStoredAnnotations, saveAnnotation, deleteAnnotation, MapAnnotation } from '../../services/annotations/annotationStore';
 import {
   ACCURATE_CITIES,
   ENVIRONMENTAL_VARIABLES,
@@ -47,6 +48,8 @@ interface Earth3DGlobeProps {
   analysis?: StatisticalAnalysisResponse | null;
   liveCityMetrics?: Record<string, any>;
   livePointMetrics?: Record<string, any>;
+  compact?: boolean;
+  baseMapStyle?: 'satellite' | 'cartography' | 'analytical';
 }
 
 interface CartographicLabelDef {
@@ -198,6 +201,8 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
   analysis,
   liveCityMetrics = {},
   livePointMetrics = {},
+  compact = false,
+  baseMapStyle = 'satellite',
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -238,13 +243,30 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
   const [showAffectedDisks, setShowAffectedDisks] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showTransparencyGuide, setShowTransparencyGuide] = useState<boolean>(false);
-  const [zoomDistance, setZoomDistance] = useState<number>(5.6);
+  // Default zoom at 20%: ((9.5 - 8.12) / (9.5 - 2.58)) * 100 = 20%
+  const [zoomDistance, setZoomDistance] = useState<number>(8.12);
 
   // Hover targets
   const [hoveredRegion, setHoveredRegion] = useState<GeographicRegion | null>(null);
   const [hoveredCity, setHoveredCity] = useState<CityMarker | null>(null);
   const [lastClickedCoords, setLastClickedCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [satelliteLoaded, setSatelliteLoaded] = useState<boolean>(false);
+
+  // Annotation Layer States
+  const [showAnnotations, setShowAnnotations] = useState<boolean>(true);
+  const [annotations, setAnnotations] = useState<MapAnnotation[]>(getStoredAnnotations());
+  const [isAddingAnnotation, setIsAddingAnnotation] = useState<boolean>(false);
+  const isAddingAnnotationRef = useRef<boolean>(false);
+  const [pendingAnnotationCoords, setPendingAnnotationCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [selectedAnnotation, setSelectedAnnotation] = useState<MapAnnotation | null>(null);
+  const [newAnnTitle, setNewAnnTitle] = useState<string>('');
+  const [newAnnCategory, setNewAnnCategory] = useState<'Hydrology' | 'Agriculture' | 'Temperature' | 'Ecology' | 'General'>('General');
+  const [newAnnNote, setNewAnnNote] = useState<string>('');
+  const [newAnnAuthor, setNewAnnAuthor] = useState<string>('NASA Researcher');
+
+  useEffect(() => {
+    isAddingAnnotationRef.current = isAddingAnnotation;
+  }, [isAddingAnnotation]);
 
   // References for Three.js state
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -254,13 +276,48 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
   const vectorsGroupRef = useRef<THREE.Group | null>(null);
   const markersGroupRef = useRef<THREE.Group | null>(null);
   const citiesGroupRef = useRef<THREE.Group | null>(null);
-  const targetRotationRef = useRef<{ x: number; y: number }>({ x: 0.21, y: -2.06 });
+  const activeTargetGroupRef = useRef<THREE.Group | null>(null);
+  const targetRotationRef = useRef<{ x: number; y: number }>({
+    x: 26.0 * (Math.PI / 180),
+    y: -((68.5 + 180) * (Math.PI / 180)) + Math.PI / 2,
+  });
   const isDraggingRef = useRef<boolean>(false);
   const previousMousePositionRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const autoRotateRef = useRef<boolean>(false);
   const showLabelsRef = useRef<boolean>(true);
   const showCitiesRef = useRef<boolean>(true);
+  const lastTouchTimeRef = useRef<number>(0);
+  const onSelectCoordinatesRef = useRef(onSelectCoordinates);
+  const onSelectRegionRef = useRef(onSelectRegion);
+  const earthMeshRef = useRef<THREE.Mesh | null>(null);
+
+  useEffect(() => {
+    if (!earthMeshRef.current) return;
+    const mat = earthMeshRef.current.material as THREE.MeshStandardMaterial;
+    if (baseMapStyle === 'analytical') {
+      mat.color.setHex(0x06b6d4);
+      mat.roughness = 0.2;
+      mat.metalness = 0.5;
+    } else if (baseMapStyle === 'cartography') {
+      mat.color.setHex(0xffffff);
+      mat.roughness = 0.5;
+      mat.metalness = 0.05;
+    } else {
+      mat.color.setHex(0xffffff);
+      mat.roughness = 0.68;
+      mat.metalness = 0.1;
+    }
+    mat.needsUpdate = true;
+  }, [baseMapStyle]);
+
+  useEffect(() => {
+    onSelectCoordinatesRef.current = onSelectCoordinates;
+  }, [onSelectCoordinates]);
+
+  useEffect(() => {
+    onSelectRegionRef.current = onSelectRegion;
+  }, [onSelectRegion]);
 
   useEffect(() => {
     autoRotateRef.current = autoRotate;
@@ -321,9 +378,9 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // 2. Camera (Allows ultra-close HD zoom down to z = 2.58, just 0.18 units above surface)
+    // 2. Camera initialized at z = 8.12 (20% default zoom magnification)
     const camera = new THREE.PerspectiveCamera(40, width / height, 0.02, 100);
-    camera.position.set(0, 0, 5.6);
+    camera.position.set(0, 0, 8.12);
     cameraRef.current = camera;
 
     // 3. Renderer with Maximum Anisotropy
@@ -376,6 +433,7 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
     });
     const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
     earthMesh.name = 'earthMesh';
+    earthMeshRef.current = earthMesh;
     globeGroup.add(earthMesh);
 
     const textureLoader = new THREE.TextureLoader();
@@ -577,15 +635,99 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
     globeGroup.add(citiesGroup);
     citiesGroupRef.current = citiesGroup;
 
-    // 12. Mouse & Touch Interaction (Adaptive drag speed based on zoom level)
+    // 11b. Sticky Active Target Pin Group (Locks onto any clicked surface point or city)
+    const activeTargetGroup = new THREE.Group();
+    activeTargetGroup.name = 'activeTargetGroup';
+    globeGroup.add(activeTargetGroup);
+    activeTargetGroupRef.current = activeTargetGroup;
+
+    // 12. Mouse & Mobile Touch Interaction (Adaptive drag speed & 2-finger pinch zoom)
     const canvas = renderer.domElement;
+    canvas.style.touchAction = 'none';
+
+    const selectPointAtClientCoords = (clientX: number, clientY: number) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      const mouseX = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const mouseY = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), camera);
+
+      // 1. Check direct city pin click/tap
+      if (citiesGroupRef.current) {
+        const cityHits = raycaster.intersectObjects(citiesGroupRef.current.children, true);
+        const cityObj = cityHits.find((h) => h.object.userData?.city);
+        if (cityObj && cityObj.object.userData?.city) {
+          const city: CityMarker = cityObj.object.userData.city;
+          setLastClickedCoords({ lat: city.latitude, lon: city.longitude });
+          if (onSelectCoordinatesRef.current) {
+            onSelectCoordinatesRef.current(city.latitude, city.longitude);
+          }
+          return;
+        }
+      }
+
+      // 2. Check regional sentinel tip click/tap
+      if (markersGroupRef.current) {
+        const markerHits = raycaster.intersectObjects(markersGroupRef.current.children, true);
+        const hit = markerHits.find((h) => h.object.userData?.region);
+        if (hit && hit.object.userData?.region) {
+          const reg: GeographicRegion = hit.object.userData.region;
+          setLastClickedCoords({ lat: reg.latitude, lon: reg.longitude });
+          onSelectRegionRef.current(reg);
+          return;
+        }
+      }
+
+      // 3. Check globe surface click/tap for exact coordinates
+      const earthHits = raycaster.intersectObject(earthMesh);
+      if (earthHits.length > 0) {
+        const point = earthHits[0].point;
+        globeGroup.updateMatrixWorld();
+        const localPoint = globeGroup.worldToLocal(point.clone());
+        const { lat, lon } = vector3ToLatLon(localPoint);
+
+        // If user tapped very close to a known city (< 0.28 deg), snap cleanly to that city's pin
+        let nearestCity: CityMarker | null = null;
+        let minDegDist = 0.28;
+        if (showCitiesRef.current) {
+          for (const city of ACCURATE_CITIES) {
+            const d = Math.hypot(city.latitude - lat, city.longitude - lon);
+            if (d < minDegDist) {
+              minDegDist = d;
+              nearestCity = city;
+            }
+          }
+        }
+
+        const finalLat = nearestCity ? nearestCity.latitude : lat;
+        const finalLon = nearestCity ? nearestCity.longitude : lon;
+
+        if (isAddingAnnotationRef.current) {
+          setPendingAnnotationCoords({ lat: finalLat, lon: finalLon });
+          setIsAddingAnnotation(false);
+          return;
+        }
+
+        setLastClickedCoords({ lat: finalLat, lon: finalLon });
+        if (onSelectCoordinatesRef.current) {
+          onSelectCoordinatesRef.current(finalLat, finalLon);
+        }
+      }
+    };
+
+    let mouseMovedDist = 0;
 
     const onMouseDown = (e: MouseEvent) => {
+      if (Date.now() - lastTouchTimeRef.current < 600) return;
       isDraggingRef.current = true;
+      mouseMovedDist = 0;
       previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
     };
 
     const onMouseMove = (e: MouseEvent) => {
+      if (Date.now() - lastTouchTimeRef.current < 600) return;
       const rect = canvas.getBoundingClientRect();
       const mouseX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const mouseY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -595,7 +737,6 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
 
       let hitFound = false;
 
-      // Check cities first
       if (citiesGroupRef.current) {
         const cityHits = raycaster.intersectObjects(citiesGroupRef.current.children, true);
         const cityObj = cityHits.find((h) => h.object.userData?.city);
@@ -607,7 +748,6 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
         }
       }
 
-      // Check regional sentinels next
       if (!hitFound && markersGroupRef.current) {
         const regionHits = raycaster.intersectObjects(markersGroupRef.current.children, true);
         const regObj = regionHits.find((h) => h.object.userData?.region);
@@ -629,8 +769,8 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
 
       const deltaX = e.clientX - previousMousePositionRef.current.x;
       const deltaY = e.clientY - previousMousePositionRef.current.y;
+      mouseMovedDist += Math.hypot(deltaX, deltaY);
 
-      // Slower, finer pan control when zoomed in close to cities
       const distFromSurface = Math.max(0.18, camera.position.z - GLOBE_RADIUS);
       const dragSensitivity = Math.min(0.005, Math.max(0.0006, (distFromSurface / 3.6) * 0.0045));
 
@@ -646,45 +786,9 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
     };
 
     const onClick = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const mouseY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), camera);
-
-      // Check city click
-      if (citiesGroupRef.current) {
-        const cityHits = raycaster.intersectObjects(citiesGroupRef.current.children, true);
-        const cityObj = cityHits.find((h) => h.object.userData?.city);
-        if (cityObj && cityObj.object.userData?.city) {
-          const city: CityMarker = cityObj.object.userData.city;
-          if (onSelectCoordinates) onSelectCoordinates(city.latitude, city.longitude);
-          return;
-        }
-      }
-
-      // Check regional sentinel click
-      if (markersGroupRef.current) {
-        const markerHits = raycaster.intersectObjects(markersGroupRef.current.children, true);
-        const hit = markerHits.find((h) => h.object.userData?.region);
-        if (hit && hit.object.userData?.region) {
-          onSelectRegion(hit.object.userData.region);
-          return;
-        }
-      }
-
-      // Check globe surface click for exact coordinates
-      const earthHits = raycaster.intersectObject(earthMesh);
-      if (earthHits.length > 0) {
-        const point = earthHits[0].point;
-        const localPoint = globeGroup.worldToLocal(point.clone());
-        const { lat, lon } = vector3ToLatLon(localPoint);
-        setLastClickedCoords({ lat, lon });
-        if (onSelectCoordinates) {
-          onSelectCoordinates(lat, lon);
-        }
-      }
+      if (Date.now() - lastTouchTimeRef.current < 600) return;
+      if (mouseMovedDist > 8) return;
+      selectPointAtClientCoords(e.clientX, e.clientY);
     };
 
     const onWheel = (e: WheelEvent) => {
@@ -695,11 +799,93 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
       setZoomDistance(Number(camera.position.z.toFixed(2)));
     };
 
+    // Mobile Touch Support: 1-finger drag rotation, 2-finger pinch zoom, and tap-to-select without scrolling page
+    let touchMovedDist = 0;
+    let initialPinchDist = 0;
+    let initialPinchZoomZ = camera.position.z;
+
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchTimeRef.current = Date.now();
+      if (e.cancelable) e.preventDefault();
+
+      if (e.touches.length === 1) {
+        isDraggingRef.current = true;
+        touchMovedDist = 0;
+        previousMousePositionRef.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+        };
+      } else if (e.touches.length === 2) {
+        isDraggingRef.current = false;
+        touchMovedDist = 999;
+        const dx = e.touches[1].clientX - e.touches[0].clientX;
+        const dy = e.touches[1].clientY - e.touches[0].clientY;
+        initialPinchDist = Math.hypot(dx, dy);
+        initialPinchZoomZ = camera.position.z;
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      lastTouchTimeRef.current = Date.now();
+      if (e.cancelable) e.preventDefault();
+
+      if (e.touches.length === 1 && isDraggingRef.current) {
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - previousMousePositionRef.current.x;
+        const deltaY = touch.clientY - previousMousePositionRef.current.y;
+        touchMovedDist += Math.hypot(deltaX, deltaY);
+
+        const distFromSurface = Math.max(0.18, camera.position.z - GLOBE_RADIUS);
+        const dragSensitivity = Math.min(0.0055, Math.max(0.0007, (distFromSurface / 3.6) * 0.005));
+
+        targetRotationRef.current.y += deltaX * dragSensitivity;
+        targetRotationRef.current.x += deltaY * dragSensitivity;
+        targetRotationRef.current.x = Math.max(
+          -Math.PI / 2.1,
+          Math.min(Math.PI / 2.1, targetRotationRef.current.x)
+        );
+
+        previousMousePositionRef.current = { x: touch.clientX, y: touch.clientY };
+      } else if (e.touches.length === 2 && initialPinchDist > 10) {
+        const dx = e.touches[1].clientX - e.touches[0].clientX;
+        const dy = e.touches[1].clientY - e.touches[0].clientY;
+        const currentDist = Math.max(10, Math.hypot(dx, dy));
+        const ratio = initialPinchDist / currentDist;
+        const targetSurfaceDist = Math.max(0.18, (initialPinchZoomZ - GLOBE_RADIUS) * ratio);
+        camera.position.z = Math.max(2.58, Math.min(9.5, GLOBE_RADIUS + targetSurfaceDist));
+        setZoomDistance(Number(camera.position.z.toFixed(2)));
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      lastTouchTimeRef.current = Date.now();
+      if (e.cancelable) e.preventDefault();
+
+      if (e.touches.length === 0) {
+        if (isDraggingRef.current && touchMovedDist < 14 && e.changedTouches.length > 0) {
+          const t = e.changedTouches[0];
+          selectPointAtClientCoords(t.clientX, t.clientY);
+        }
+        isDraggingRef.current = false;
+        initialPinchDist = 0;
+      } else if (e.touches.length === 1) {
+        previousMousePositionRef.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+        };
+        isDraggingRef.current = true;
+      }
+    };
+
     canvas.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     canvas.addEventListener('click', onClick);
     canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
 
     // Reusable vectors for 60fps cartographic label projection
     const tempLocalPos = new THREE.Vector3();
@@ -721,16 +907,16 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
           }
         }
 
-        globeGroupRef.current.rotation.y += (targetRotationRef.current.y - globeGroupRef.current.rotation.y) * 0.1;
-        globeGroupRef.current.rotation.x += (targetRotationRef.current.x - globeGroupRef.current.rotation.x) * 0.1;
+        globeGroupRef.current.rotation.y += (targetRotationRef.current.y - globeGroupRef.current.rotation.y) * 0.12;
+        globeGroupRef.current.rotation.x += (targetRotationRef.current.x - globeGroupRef.current.rotation.x) * 0.12;
         globeGroupRef.current.updateMatrixWorld();
       }
 
-      // DYNAMIC ZOOM-ADAPTIVE SCALING FOR STICKIES (CITIES & REGION BEACONS)
+      // DYNAMIC ZOOM-ADAPTIVE SCALING FOR STICKIES (CITIES, REGION BEACONS & ACTIVE TARGET PIN)
       const camZ = camera.position.z;
       const distToSurface = Math.max(0.16, camZ - GLOBE_RADIUS);
       const baseSurfaceDist = 3.6;
-      const stickyScale = Math.max(0.12, Math.min(1.1, Math.pow(distToSurface / baseSurfaceDist, 0.88)));
+      const stickyScale = Math.max(0.14, Math.min(1.1, Math.pow(distToSurface / baseSurfaceDist, 0.85)));
 
       if (citiesGroupRef.current) {
         citiesGroupRef.current.children.forEach((anchor) => {
@@ -740,6 +926,12 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
 
       if (markersGroupRef.current) {
         markersGroupRef.current.children.forEach((anchor) => {
+          anchor.scale.setScalar(stickyScale);
+        });
+      }
+
+      if (activeTargetGroupRef.current) {
+        activeTargetGroupRef.current.children.forEach((anchor) => {
           anchor.scale.setScalar(stickyScale);
         });
       }
@@ -761,9 +953,10 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
 
         for (let i = 0; i < labelNodes.length; i++) {
           const el = labelNodes[i] as HTMLElement;
+          el.style.pointerEvents = 'none';
+
           if (!showLabelsRef.current) {
             el.style.opacity = '0';
-            el.style.pointerEvents = 'none';
             continue;
           }
 
@@ -774,14 +967,12 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
 
           if (isCityLabel && !showCitiesRef.current) {
             el.style.opacity = '0';
-            el.style.pointerEvents = 'none';
             continue;
           }
 
           // Check Zoom Level-of-Detail (LOD)
           if (camZ > minZoomZ) {
             el.style.opacity = '0';
-            el.style.pointerEvents = 'none';
             continue;
           }
 
@@ -804,7 +995,6 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
 
           if (facingDot <= threshold) {
             el.style.opacity = '0';
-            el.style.pointerEvents = 'none';
             continue;
           }
 
@@ -816,14 +1006,12 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
           // Keep inside viewport bounds
           if (screenX < 20 || screenX > cw - 20 || screenY < 20 || screenY > ch - 20) {
             el.style.opacity = '0';
-            el.style.pointerEvents = 'none';
             continue;
           }
 
           const edgeFade = Math.min(1, (facingDot - threshold) * 4.5);
           el.style.transform = `translate3d(${screenX.toFixed(1)}px, ${screenY.toFixed(1)}px, 0)`;
           el.style.opacity = edgeFade.toFixed(2);
-          el.style.pointerEvents = isCityLabel ? 'auto' : 'none';
         }
       }
     };
@@ -857,6 +1045,10 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
       window.removeEventListener('mouseup', onMouseUp);
       canvas.removeEventListener('click', onClick);
       canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('touchstart', onTouchStart);
+      canvas.removeEventListener('touchmove', onTouchMove);
+      canvas.removeEventListener('touchend', onTouchEnd);
+      canvas.removeEventListener('touchcancel', onTouchEnd);
       if (mountRef.current && renderer.domElement) {
         mountRef.current.removeChild(renderer.domElement);
       }
@@ -923,7 +1115,7 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
       nodeMesh.userData = { city, metric };
       anchor.add(nodeMesh);
 
-      // 3. Flood / Anomaly Halo Disk
+      // 3. Flood / Anomaly Halo Disk (Visual only — no userData so it never hijacks neighboring clicks)
       if (isExtreme || isSelectedCity) {
         const diskRadius = isSindh ? 0.115 : 0.09;
         const floodDiskGeom = new THREE.CircleGeometry(diskRadius, 32);
@@ -936,7 +1128,6 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
         });
         const floodDiskMesh = new THREE.Mesh(floodDiskGeom, floodDiskMat);
         floodDiskMesh.position.set(0, 0, 0.003);
-        floodDiskMesh.userData = { city, metric };
         anchor.add(floodDiskMesh);
       }
 
@@ -965,7 +1156,6 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
       const anchor = new THREE.Group();
       anchor.position.copy(pos);
       anchor.lookAt(pos.clone().multiplyScalar(2));
-      anchor.userData = { region: reg };
 
       const diskRadius = isFlagship ? 0.17 : isCritical ? 0.14 : 0.11;
       const diskGeom = new THREE.CircleGeometry(diskRadius, 32);
@@ -980,7 +1170,6 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
       });
       const diskMesh = new THREE.Mesh(diskGeom, diskMat);
       diskMesh.position.set(0, 0, 0.006);
-      diskMesh.userData = { region: reg };
       anchor.add(diskMesh);
 
       const stemHeight = isFlagship ? 0.22 : isSelected ? 0.18 : 0.12;
@@ -993,7 +1182,6 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
       });
       const stemMesh = new THREE.Mesh(stemGeom, stemMat);
       stemMesh.position.set(0, 0, stemHeight / 2);
-      stemMesh.userData = { region: reg };
       anchor.add(stemMesh);
 
       const tipGeom = new THREE.SphereGeometry(isFlagship ? 0.034 : 0.024, 12, 12);
@@ -1009,15 +1197,90 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
     });
   }, [regions, selectedRegion, showAffectedDisks]);
 
-  // Center globe smoothly on selected region using shortest angular path
+  // Render a persistent 3D Sticky Pin at the active selectedRegion / clicked coordinate so the marker always sticks to the exact point on the globe
   useEffect(() => {
-    if (!selectedRegion) return;
-    if (selectedRegion.id?.startsWith('coord_') || selectedRegion.country === 'Surface Probe') {
-      return;
+    const activeTargetGroup = activeTargetGroupRef.current;
+    if (!activeTargetGroup) return;
+
+    while (activeTargetGroup.children.length > 0) {
+      const obj = activeTargetGroup.children[0];
+      activeTargetGroup.remove(obj);
     }
 
+    if (!selectedRegion) return;
+
+    const pos = latLonToVector3(selectedRegion.latitude, selectedRegion.longitude, GLOBE_RADIUS);
+    const anchor = new THREE.Group();
+    anchor.position.copy(pos);
+    anchor.lookAt(pos.clone().multiplyScalar(2));
+
+    // 1. High-contrast Outer Target Ring locked to surface coordinate
+    const outerRingGeom = new THREE.RingGeometry(0.068, 0.092, 36);
+    const outerRingMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+    });
+    const outerRingMesh = new THREE.Mesh(outerRingGeom, outerRingMat);
+    outerRingMesh.position.set(0, 0, 0.008);
+    anchor.add(outerRingMesh);
+
+    // 2. Inner Target Halo
+    const innerHaloGeom = new THREE.CircleGeometry(0.064, 32);
+    const innerHaloMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+    });
+    const innerHaloMesh = new THREE.Mesh(innerHaloGeom, innerHaloMat);
+    innerHaloMesh.position.set(0, 0, 0.007);
+    anchor.add(innerHaloMesh);
+
+    // 3. Vertical Pin Stem
+    const pinHeight = 0.19;
+    const pinStemGeom = new THREE.CylinderGeometry(0.006, 0.006, pinHeight, 10);
+    pinStemGeom.rotateX(Math.PI / 2);
+    const pinStemMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+    });
+    const pinStemMesh = new THREE.Mesh(pinStemGeom, pinStemMat);
+    pinStemMesh.position.set(0, 0, pinHeight / 2);
+    anchor.add(pinStemMesh);
+
+    // 4. Pin Head Beacon Sphere
+    const pinHeadGeom = new THREE.SphereGeometry(0.032, 16, 16);
+    const pinHeadMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+    });
+    const pinHeadMesh = new THREE.Mesh(pinHeadGeom, pinHeadMat);
+    pinHeadMesh.position.set(0, 0, pinHeight);
+    anchor.add(pinHeadMesh);
+
+    // 5. Surface Lock Core Dot
+    const coreDotGeom = new THREE.SphereGeometry(0.02, 14, 14);
+    const coreDotMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+    });
+    const coreDotMesh = new THREE.Mesh(coreDotGeom, coreDotMat);
+    coreDotMesh.position.set(0, 0, 0.012);
+    anchor.add(coreDotMesh);
+
+    activeTargetGroup.add(anchor);
+  }, [selectedRegion]);
+
+  // Center globe smoothly on selected region or clicked surface point using exact 1:1 spherical latitude & shortest angular path
+  useEffect(() => {
+    if (!selectedRegion) return;
+
     const rawTargetY = -((selectedRegion.longitude + 180) * (Math.PI / 180)) + Math.PI / 2;
-    const targetX = selectedRegion.latitude * (Math.PI / 180) * 0.48;
+    const targetX = Math.max(
+      -Math.PI / 2.1,
+      Math.min(Math.PI / 2.1, selectedRegion.latitude * (Math.PI / 180))
+    );
 
     const currentY = globeGroupRef.current ? globeGroupRef.current.rotation.y : targetRotationRef.current.y;
     let deltaY = (rawTargetY - currentY) % (2 * Math.PI);
@@ -1030,7 +1293,7 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
     };
 
     if (selectedRegion.id?.startsWith('city_') && cameraRef.current) {
-      cameraRef.current.position.z = Math.min(cameraRef.current.position.z, 3.45);
+      cameraRef.current.position.z = Math.min(cameraRef.current.position.z, 3.65);
       setZoomDistance(Number(cameraRef.current.position.z.toFixed(2)));
     }
   }, [selectedRegion]);
@@ -1109,12 +1372,17 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
       ref={containerRef}
       className={
         isFullscreen
-          ? 'fixed inset-0 z-[99999] bg-[#06080e] w-screen h-screen flex flex-col select-none overflow-hidden'
-          : 'relative w-full h-[600px] bg-[#06080e] rounded-xl border border-slate-800 overflow-hidden flex flex-col select-none'
+          ? 'fixed inset-0 z-[99999] bg-[#07090E] w-screen h-[100dvh] flex flex-col select-none overflow-hidden'
+          : compact
+          ? 'relative w-full h-[420px] sm:h-[520px] bg-[#07090E] rounded-md border border-slate-200 dark:border-[#1E2638] overflow-hidden flex flex-col select-none'
+          : 'relative w-full h-[460px] sm:h-[600px] bg-[#07090E] rounded-md border border-slate-200 dark:border-[#1E2638] overflow-hidden flex flex-col select-none'
       }
     >
       {/* 3D WebGL Canvas Mount */}
-      <div ref={mountRef} className="flex-1 w-full h-full min-h-0 cursor-grab active:cursor-grabbing" />
+      <div
+        ref={mountRef}
+        className="flex-1 w-full h-full min-h-0 cursor-grab active:cursor-grabbing touch-none"
+      />
 
       {/* REAL-TIME 3D PROJECTED CARTOGRAPHIC LABELS LAYER (Countries, Provinces, Rivers & Cities) */}
       <div
@@ -1130,8 +1398,7 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
             data-lon={lbl.lon}
             data-minzoom={lbl.minZoomZ}
             data-kind={lbl.kind}
-            style={{ opacity: 0, left: 0, top: 0 }}
-            className="absolute -translate-x-1/2 -translate-y-1/2 will-change-transform transition-opacity duration-75"
+            className="absolute top-0 left-0 opacity-0 -translate-x-1/2 -translate-y-1/2 will-change-transform transition-opacity duration-75 pointer-events-none"
           >
             {lbl.kind === 'country' && (
               <span className="text-[11px] font-bold tracking-[0.22em] text-slate-200/85 uppercase drop-shadow-[0_1px_4px_rgba(0,0,0,0.95)] whitespace-nowrap">
@@ -1149,150 +1416,360 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
               </span>
             )}
             {lbl.kind === 'river' && (
-              <span className="text-[10px] font-mono font-semibold tracking-wider text-sky-400/95 drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)] whitespace-nowrap">
+              <span className="text-[10px] font-mono font-semibold tracking-wider text-cyan-400/95 drop-shadow-[0_1px_3px_rgba(0,0,0,0.95)] whitespace-nowrap">
                 ≈ {lbl.name}
               </span>
             )}
           </div>
         ))}
 
-        {/* 2. Real Map City Names & Live NASA Value Tags */}
+        {/* 2. Real Map City Names & Live NASA Value Tags (Non-interactive overlay so all touches pass cleanly to 3D globe canvas) */}
         {ACCURATE_CITIES.map((city) => {
           const isSelectedCity =
             Math.abs(selectedRegion.latitude - city.latitude) < 0.08 &&
             Math.abs(selectedRegion.longitude - city.longitude) < 0.08;
           const isPrimary = PRIMARY_CITY_IDS.has(city.id) || isSelectedCity;
-          const minZoomForCity = isSelectedCity ? 9.5 : isPrimary ? 6.4 : 4.45;
+          const minZoomForCity = isSelectedCity ? 9.5 : isPrimary ? 8.8 : 5.4;
           const cityMetric = resolveCityMetric(city);
 
           return (
-            <button
+            <div
               key={`city_lbl_${city.id}`}
-              type="button"
               data-lat={city.latitude}
               data-lon={city.longitude}
               data-minzoom={minZoomForCity}
               data-kind="city"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onSelectCoordinates) {
-                  onSelectCoordinates(city.latitude, city.longitude);
-                }
-              }}
-              style={{ opacity: 0, left: 0, top: 0 }}
-              className="absolute translate-x-2 -translate-y-1/2 will-change-transform group text-left focus:outline-none"
+              className="absolute top-0 left-0 opacity-0 translate-x-2 -translate-y-1/2 will-change-transform text-left pointer-events-none select-none"
             >
               <div
-                className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded transition-colors ${
+                className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded-xs transition-colors ${
                   isSelectedCity
-                    ? 'bg-white text-slate-950 font-bold shadow-lg'
-                    : 'bg-[#07090e]/85 hover:bg-[#0f1420] text-white border border-white/15 backdrop-blur-xs'
+                    ? 'bg-cyan-400 text-[#07090E] font-bold shadow-lg'
+                    : 'bg-[#07090E]/90 text-white border border-[#1E2638]'
                 }`}
               >
                 <span
                   className="w-1.5 h-1.5 rounded-full shrink-0"
-                  style={{ backgroundColor: isSelectedCity ? '#0284c7' : cityMetric.color }}
+                  style={{ backgroundColor: isSelectedCity ? '#07090E' : cityMetric.color }}
                 />
                 <span className="text-[10px] font-medium tracking-tight whitespace-nowrap leading-none">
                   {city.name}
                 </span>
                 <span
                   className={`text-[9px] font-mono tabular-nums whitespace-nowrap leading-none ${
-                    isSelectedCity ? 'text-slate-700 font-semibold' : 'text-slate-300'
+                    isSelectedCity ? 'text-[#07090E] font-bold' : 'text-slate-300'
                   }`}
                 >
                   {cityMetric.formatted}
                 </span>
               </div>
-            </button>
+            </div>
           );
         })}
+
+        {/* 3. Research Annotations Layer */}
+        {showAnnotations &&
+          annotations.map((ann) => (
+            <div
+              key={`ann_lbl_${ann.id}`}
+              data-lat={ann.latitude}
+              data-lon={ann.longitude}
+              data-minzoom={3.0}
+              data-kind="annotation"
+              className="absolute top-0 left-0 opacity-0 translate-x-3 -translate-y-1/2 will-change-transform text-left pointer-events-auto select-none cursor-pointer group z-30"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedAnnotation(ann);
+              }}
+            >
+              <div className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-2 py-1 rounded-xs shadow-xl border border-amber-300 transition-transform hover:scale-105">
+                <Tag className="w-3 h-3 shrink-0" />
+                <span className="text-[10px] tracking-tight whitespace-nowrap">{ann.title}</span>
+              </div>
+            </div>
+          ))}
       </div>
 
-      {/* Top Left: Telemetry Readout Panel */}
-      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 max-w-xs sm:max-w-sm pointer-events-none">
-        <div className="bg-[#0b0e17]/95 border border-slate-800 backdrop-blur-xl p-4 rounded-xl shadow-2xl text-white">
-          <div className="flex items-center justify-between gap-3 mb-1">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: activeMetric.color }} />
-              <h2 className="font-semibold text-sm tracking-tight text-white truncate">{selectedRegion.name}</h2>
+      {/* Active Pin Drop Banner */}
+      {isAddingAnnotation && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-amber-500 text-slate-950 font-bold px-4 py-2 rounded-md shadow-2xl text-xs flex items-center gap-2 animate-bounce">
+          <Tag className="w-4 h-4" />
+          <span>Click anywhere on the 3D globe to drop your research pin.</span>
+          <button
+            type="button"
+            onClick={() => setIsAddingAnnotation(false)}
+            className="ml-2 bg-slate-950 text-white px-2 py-0.5 rounded text-[10px]"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Create Annotation Modal */}
+      {pendingAnnotationCoords && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#0D111A] border border-[#1E2638] rounded-lg p-6 max-w-md w-full text-white shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#1E2638]">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-amber-400" />
+                <h3 className="font-display font-bold text-base">Drop Research Pin &amp; Note</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingAnnotationCoords(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-            <span className="font-mono text-[11px] text-sky-400 font-semibold shrink-0">
-              {selectedYear} · NASA LIVE
+
+            <div className="space-y-3 text-xs">
+              <div className="font-mono text-cyan-400">
+                Coordinates: {pendingAnnotationCoords.lat.toFixed(4)}° N, {pendingAnnotationCoords.lon.toFixed(4)}° E
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-medium mb-1">Research Title</label>
+                <input
+                  type="text"
+                  value={newAnnTitle}
+                  onChange={(e) => setNewAnnTitle(e.target.value)}
+                  placeholder="e.g., Indus Basin Silt Anomaly"
+                  className="w-full bg-[#161D2B] border border-[#1E2638] rounded px-3 py-2 text-white focus:outline-none focus:border-cyan-500 font-sans text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Category</label>
+                  <select
+                    value={newAnnCategory}
+                    onChange={(e) => setNewAnnCategory(e.target.value as any)}
+                    className="w-full bg-[#161D2B] border border-[#1E2638] rounded px-2.5 py-2 text-white focus:outline-none focus:border-cyan-500 font-sans text-xs"
+                  >
+                    <option value="General">General</option>
+                    <option value="Hydrology">Hydrology</option>
+                    <option value="Agriculture">Agriculture</option>
+                    <option value="Temperature">Temperature</option>
+                    <option value="Ecology">Ecology</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-400 font-medium mb-1">Researcher / Author</label>
+                  <input
+                    type="text"
+                    value={newAnnAuthor}
+                    onChange={(e) => setNewAnnAuthor(e.target.value)}
+                    className="w-full bg-[#161D2B] border border-[#1E2638] rounded px-3 py-2 text-white focus:outline-none focus:border-cyan-500 font-sans text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-medium mb-1">Research Notes</label>
+                <textarea
+                  value={newAnnNote}
+                  onChange={(e) => setNewAnnNote(e.target.value)}
+                  rows={3}
+                  placeholder="Enter observation notes, anomalies, or field measurements..."
+                  className="w-full bg-[#161D2B] border border-[#1E2638] rounded px-3 py-2 text-white focus:outline-none focus:border-cyan-500 font-sans text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPendingAnnotationCoords(null)}
+                className="px-4 py-2 rounded bg-[#161D2B] text-slate-300 hover:text-white text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!newAnnTitle.trim()) return;
+                  const updated = saveAnnotation({
+                    title: newAnnTitle.trim(),
+                    category: newAnnCategory,
+                    latitude: pendingAnnotationCoords.lat,
+                    longitude: pendingAnnotationCoords.lon,
+                    note: newAnnNote.trim() || 'No additional notes provided.',
+                    author: newAnnAuthor.trim() || 'NASA Researcher',
+                  });
+                  setAnnotations(updated);
+                  setPendingAnnotationCoords(null);
+                  setNewAnnTitle('');
+                  setNewAnnNote('');
+                }}
+                className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold"
+              >
+                Save Annotation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Annotation Modal */}
+      {selectedAnnotation && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#0D111A] border border-[#1E2638] rounded-lg p-6 max-w-md w-full text-white shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#1E2638]">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-amber-400" />
+                <h3 className="font-display font-bold text-base">{selectedAnnotation.title}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedAnnotation(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center justify-between text-slate-400 font-mono">
+                <span className="bg-[#161D2B] px-2 py-0.5 rounded text-amber-400 font-bold">
+                  {selectedAnnotation.category}
+                </span>
+                <span>By {selectedAnnotation.author}</span>
+              </div>
+
+              <div className="font-mono text-cyan-400">
+                Coordinates: {selectedAnnotation.latitude.toFixed(4)}° N, {selectedAnnotation.longitude.toFixed(4)}° E
+              </div>
+
+              <div className="bg-[#161D2B]/50 p-3 rounded border border-[#1E2638] text-slate-200 font-sans leading-relaxed">
+                {selectedAnnotation.note}
+              </div>
+
+              <div className="text-[10px] text-slate-500 font-mono">
+                Saved: {new Date(selectedAnnotation.createdAt).toLocaleString()}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-[#1E2638]">
+              <button
+                type="button"
+                onClick={() => {
+                  const updated = deleteAnnotation(selectedAnnotation.id);
+                  setAnnotations(updated);
+                  setSelectedAnnotation(null);
+                }}
+                className="px-3 py-1.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-semibold"
+              >
+                Delete Note
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedAnnotation(null)}
+                className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Top Left: Telemetry Readout Panel (Responsive for Mobile & Desktop) */}
+      <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 z-10 flex flex-col gap-1.5 max-w-[200px] sm:max-w-[240px] pointer-events-none">
+        <div className="bg-[#07090E]/95 border border-[#1E2638] p-2.5 sm:p-3 rounded-sm text-white shadow-xl">
+          <div className="flex items-center justify-between gap-2 mb-0.5">
+            <h2 className="font-display font-bold text-xs sm:text-sm tracking-tight text-white truncate">
+              {selectedRegion.name}
+            </h2>
+            <span className="font-mono text-[10px] sm:text-[11px] text-cyan-400 font-bold tabular-nums shrink-0">
+              {selectedYear}
             </span>
           </div>
 
-          <div className="text-[11px] text-slate-400 font-mono mb-3">
-            {selectedRegion.latitude.toFixed(2)}° N, {selectedRegion.longitude.toFixed(2)}° E · {selectedRegion.country}
+          <div className="text-[10px] text-slate-400 font-mono tabular-nums mb-1.5 truncate">
+            {selectedRegion.latitude.toFixed(2)}° N, {selectedRegion.longitude.toFixed(2)}° E
           </div>
 
           {/* REAL OBSERVATION METRIC FOR ACTIVE VARIABLE */}
-          <div className="border-t border-slate-800/90 pt-2.5 space-y-1.5">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-xs text-slate-300 font-medium truncate">
-                {variableMeta?.name || selectedVariable}
-              </span>
-              <span
-                className="font-mono font-bold text-sm text-white tabular-nums shrink-0"
-                style={{ color: activeMetric.color }}
-              >
-                {activeMetric.formatted}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
-              <span>
-                {activeMetric.peakMonth
-                  ? `Peak: ${activeMetric.peakMonth} (${activeMetric.peakValue})`
-                  : 'NASA POWER / GISTEMP'}
-              </span>
-              <span className="font-semibold" style={{ color: activeMetric.color }}>
-                {activeMetric.status}
-              </span>
-            </div>
+          <div className="border-t border-[#1E2638] pt-1.5 flex items-baseline justify-between gap-2">
+            <span className="text-[10px] text-slate-400 font-medium truncate">
+              {variableMeta?.short_name || selectedVariable}
+            </span>
+            <span
+              className="font-mono font-bold text-xs sm:text-sm text-white tabular-nums shrink-0"
+              style={{ color: activeMetric.color }}
+            >
+              {activeMetric.formatted}
+            </span>
           </div>
         </div>
 
         {lastClickedCoords && (
-          <div className="inline-flex items-center gap-1.5 bg-[#0b0e17]/90 border border-slate-800 backdrop-blur-xl px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300">
-            <Compass className="w-3.5 h-3.5 text-sky-400" />
-            <span>
-              Probe: {lastClickedCoords.lat.toFixed(2)}° N, {lastClickedCoords.lon.toFixed(2)}° E
+          <div className="inline-flex items-center gap-1.5 bg-[#07090E]/95 border border-[#1E2638] px-2.5 py-1 rounded-sm text-[10px] font-mono text-slate-300 tabular-nums">
+            <Compass className="w-3 h-3 text-cyan-400 shrink-0" />
+            <span className="truncate">
+              {lastClickedCoords.lat.toFixed(2)}° N, {lastClickedCoords.lon.toFixed(2)}° E
             </span>
           </div>
         )}
       </div>
 
-      {/* Top Right: 4K HD Status, Zoom Readout & Full Screen Toggle */}
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
-        <div className="hidden sm:flex items-center gap-2 bg-[#0b0e17]/90 border border-slate-800 backdrop-blur-xl px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300">
-          <span>{satelliteLoaded ? '4K Satellite + Vectors' : 'Loading 4K Map...'}</span>
-          <span className="text-slate-600">·</span>
-          <span className="text-sky-400 tabular-nums">Zoom {zoomMagnification}%</span>
+      {/* Top Right: Zoom Readout & Full Screen Toggle */}
+      <div className="absolute top-2.5 right-2.5 sm:top-3.5 sm:right-3.5 z-10 flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 bg-[#07090E]/95 border border-[#1E2638] px-2.5 py-1.5 rounded-sm text-[11px] font-mono text-slate-300">
+          <span className="hidden sm:inline text-cyan-400 font-semibold">{satelliteLoaded ? '4K' : '...'}</span>
+          <span className="hidden sm:inline text-slate-600">·</span>
+          <span className="text-white font-semibold tabular-nums">Zoom {zoomMagnification}%</span>
         </div>
 
-        {/* Data Sources Info Button */}
+        <button
+          type="button"
+          onClick={() => setIsAddingAnnotation(!isAddingAnnotation)}
+          className={`px-2.5 py-1.5 rounded-sm text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer border ${
+            isAddingAnnotation
+              ? 'bg-amber-500 text-slate-950 font-bold border-amber-400 animate-pulse'
+              : 'bg-[#07090E]/95 hover:bg-[#131926] text-amber-300 border-[#1E2638]'
+          }`}
+          title="Drop Research Pin on Map"
+        >
+          <Tag className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">{isAddingAnnotation ? 'Click Globe...' : 'Drop Pin'}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowAnnotations(!showAnnotations)}
+          className={`px-2.5 py-1.5 rounded-sm text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer border ${
+            showAnnotations
+              ? 'bg-[#1E2638] text-white border-slate-700'
+              : 'bg-[#07090E]/95 text-slate-400 border-[#1E2638]'
+          }`}
+          title="Toggle Research Annotations Layer"
+        >
+          <span>Notes ({annotations.length})</span>
+        </button>
+
         <button
           type="button"
           onClick={() => setShowTransparencyGuide(!showTransparencyGuide)}
-          className="bg-[#0b0e17]/90 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white backdrop-blur-xl px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5 whitespace-nowrap"
-          title="Inspect NASA satellite & cartographic sources"
+          className="bg-[#07090E]/95 hover:bg-[#131926] border border-[#1E2638] text-slate-300 hover:text-white px-2 py-1.5 rounded-sm text-xs font-mono transition-colors flex items-center gap-1.5 cursor-pointer"
+          title="Map Color & Ticker Guide"
         >
-          <Info className="w-3.5 h-3.5 text-sky-400" />
-          <span className="hidden md:inline">Specifications</span>
+          <Info className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="hidden sm:inline text-[11px]">Color Guide</span>
         </button>
 
-        {/* Fullscreen Toggle Button */}
         <button
           type="button"
           onClick={handleToggleFullscreen}
-          className="bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold px-3 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5 shadow-md whitespace-nowrap"
+          className="bg-cyan-500 hover:bg-cyan-400 text-[#07090E] font-bold px-2.5 py-1.5 sm:px-3 rounded-sm text-xs transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
           title={isFullscreen ? 'Exit Full Screen (ESC)' : 'Expand Map to Full Screen'}
         >
           {isFullscreen ? (
             <>
               <Minimize2 className="w-3.5 h-3.5" />
-              <span>Exit Full Screen</span>
+              <span className="hidden xs:inline">Exit</span>
             </>
           ) : (
             <>
@@ -1305,17 +1782,17 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
 
       {/* Hover Tooltip for Cities with Live NASA Values */}
       {hoveredCity && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 pointer-events-none z-20 bg-[#0b0e17]/95 border border-slate-700 backdrop-blur-2xl px-4 py-3 rounded-xl text-xs text-white shadow-2xl max-w-sm text-center">
-          <div className="flex items-center justify-center gap-1.5 font-bold text-sm text-white mb-0.5">
-            <MapPin className="w-3.5 h-3.5 text-sky-400" />
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 pointer-events-none z-20 bg-[#07090E]/95 border border-[#1E2638] px-4 py-3 rounded-md text-xs text-white shadow-2xl max-w-sm text-center">
+          <div className="flex items-center justify-center gap-1.5 font-display font-bold text-sm text-white mb-0.5">
+            <MapPin className="w-3.5 h-3.5 text-cyan-400" />
             <span>{hoveredCity.name}</span>
-            <span className="text-slate-400 font-normal">({hoveredCity.province || hoveredCity.country})</span>
+            <span className="text-slate-400 font-sans font-normal">({hoveredCity.province || hoveredCity.country})</span>
           </div>
 
           {(() => {
             const cMetric = resolveCityMetric(hoveredCity);
             return (
-              <div className="my-2 p-2.5 bg-slate-900/90 rounded-lg border border-slate-800 text-left space-y-1">
+              <div className="my-2 p-2.5 bg-[#0D111A] rounded-sm border border-[#1E2638] text-left space-y-1">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-[11px] text-slate-300">
                     {variableMeta?.name || selectedVariable} ({selectedYear}):
@@ -1338,61 +1815,115 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
             );
           })()}
 
-          <div className="text-[10px] text-slate-400 font-mono">
-            {hoveredCity.latitude.toFixed(4)}° N, {hoveredCity.longitude.toFixed(4)}° E · Click to inspect series
+          <div className="text-[10px] text-slate-400 font-mono tabular-nums">
+            {hoveredCity.latitude.toFixed(4)}° N, {hoveredCity.longitude.toFixed(4)}° E · Click to lock target
           </div>
         </div>
       )}
 
       {/* Hover Tooltip for Regions */}
       {!hoveredCity && hoveredRegion && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 pointer-events-none z-20 bg-[#0b0e17]/95 border border-slate-700 backdrop-blur-xl px-4 py-2.5 rounded-xl text-xs text-white shadow-2xl max-w-sm text-center">
-          <div className="font-semibold text-white mb-0.5">
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 pointer-events-none z-20 bg-[#07090E]/95 border border-[#1E2638] px-4 py-2.5 rounded-md text-xs text-white shadow-2xl max-w-sm text-center">
+          <div className="font-display font-bold text-white mb-0.5">
             {hoveredRegion.name} ({hoveredRegion.country})
           </div>
           <p className="text-[11px] text-slate-300">{hoveredRegion.affected_description || hoveredRegion.notes}</p>
-          <div className="text-[10px] text-sky-400 mt-1 font-mono">Click to focus & inspect NASA series</div>
+          <div className="text-[10px] text-cyan-400 mt-1 font-mono">Click to lock target & inspect NASA series</div>
         </div>
       )}
 
-      {/* Specifications Modal */}
+      {/* Map Color & Ticker Guide Modal (Opened via Info icon next to Full Screen button) */}
       {showTransparencyGuide && (
-        <div className="absolute inset-0 z-30 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0b0e17] border border-slate-800 rounded-2xl p-6 max-w-md w-full text-slate-200 shadow-2xl relative space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-sm font-semibold text-white">NASA Telemetry & Cartographic Specifications</h3>
+        <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-[#0D111A] border border-[#1E2638] rounded-md p-4 sm:p-5 max-w-md w-full text-slate-200 shadow-2xl relative space-y-4 max-h-[90vh] overflow-y-auto my-auto">
+            <div className="sticky top-0 bg-[#0D111A] py-1 flex items-center justify-between pb-3 border-b border-[#1E2638] z-10">
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4 text-cyan-400 shrink-0" />
+                <h3 className="font-display text-sm font-bold text-white">
+                  Map Color &amp; Ticker Guide
+                </h3>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowTransparencyGuide(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                className="bg-[#161D2B] hover:bg-[#1E2638] text-white p-2 rounded-sm cursor-pointer border border-[#1E2638] flex items-center justify-center"
+                title="Close Guide"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3 text-xs leading-relaxed text-slate-300">
-              <div className="border-b border-slate-800/80 pb-3">
-                <span className="font-semibold text-white block mb-0.5">Live NASA POWER & GISTEMP API</span>
-                <p className="text-slate-400">
-                  All 8 environmental variables are fetched dynamically from the live NASA Langley POWER REST API
-                  (`power.larc.nasa.gov/api/temporal/monthly/point`) and NASA GISS LOTI dataset.
-                </p>
+            {/* 1. City Ticker & Pin Colors */}
+            <div className="space-y-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-semibold">
+                City Ticker &amp; Pin Colors
               </div>
 
-              <div className="border-b border-slate-800/80 pb-3">
-                <span className="font-semibold text-white block mb-0.5">4K HD Imagery & Real Map Labels</span>
-                <p className="text-slate-400">
-                  Combines 4K NASA Blue Marble imagery, topographic relief bump maps, Natural Earth 3D vector borders,
-                  and real-time 3D projected country, province, river, and city names.
-                </p>
-              </div>
+              <div className="grid grid-cols-1 gap-2 text-xs">
+                <div className="flex items-center gap-3 p-2 rounded-sm bg-[#07090E] border border-[#1E2638]">
+                  <span className="px-1.5 py-0.5 rounded-xs bg-cyan-400 text-[#07090E] font-mono text-[10px] font-bold shrink-0">
+                    Active
+                  </span>
+                  <span className="text-slate-300">
+                    <strong className="text-white">Cyan Highlight Ticker:</strong> Currently selected city or locked surface point.
+                  </span>
+                </div>
 
-              <div>
-                <span className="font-semibold text-white block mb-0.5">Adaptive Zoom LOD & Sticky Scaling</span>
-                <p className="text-slate-400">
-                  City pins, flood halos, and secondary district labels automatically adjust as you zoom closer to a
-                  region so neighboring hubs in Sindh remain clear and legible.
-                </p>
+                <div className="flex items-center gap-3 p-2 rounded-sm bg-[#07090E] border border-[#1E2638]">
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#ef4444] shrink-0 ring-2 ring-[#ef4444]/30" />
+                  <span className="text-slate-300">
+                    <strong className="text-white">Red Ticker:</strong> Extreme heatwave (&gt;48°C peak) or critical climate hotspot.
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 p-2 rounded-sm bg-[#07090E] border border-[#1E2638]">
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#f59e0b] shrink-0 ring-2 ring-[#f59e0b]/30" />
+                  <span className="text-slate-300">
+                    <strong className="text-white">Amber / Orange Ticker:</strong> High heat stress (&gt;30°C avg) or dry soil moisture.
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 p-2 rounded-sm bg-[#07090E] border border-[#1E2638]">
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#6366f1] shrink-0 ring-2 ring-[#6366f1]/30" />
+                  <span className="text-slate-300">
+                    <strong className="text-white">Indigo / Deep Blue Ticker:</strong> Extreme flood rainfall (&gt;250 mm) or waterlogged soil.
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 p-2 rounded-sm bg-[#07090E] border border-[#1E2638]">
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#38bdf8] shrink-0 ring-2 ring-[#38bdf8]/30" />
+                  <span className="text-slate-300">
+                    <strong className="text-white">Sky Blue Ticker:</strong> Normal temperature, normal rainfall, or balanced moisture.
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 p-2 rounded-sm bg-[#07090E] border border-[#1E2638]">
+                  <span className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0 ring-2 ring-white/80" />
+                  <span className="text-slate-300">
+                    <strong className="text-white">Green &amp; White 3D Pin:</strong> Exact GPS surface point locked on the globe.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Map Borders & Lines */}
+            <div className="space-y-1.5 pt-1 border-t border-[#1E2638]">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-semibold">
+                Map Borders &amp; Lines
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[11px] pt-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-4 h-0.5 bg-amber-400 shrink-0" />
+                  <span className="text-slate-300">Sindh Border</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-4 h-0.5 bg-cyan-400 shrink-0" />
+                  <span className="text-slate-300">Major Rivers</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-4 h-0.5 bg-slate-300 shrink-0" />
+                  <span className="text-slate-300">Country Lines</span>
+                </div>
               </div>
             </div>
 
@@ -1400,115 +1931,108 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
               <button
                 type="button"
                 onClick={() => setShowTransparencyGuide(false)}
-                className="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 rounded-lg text-xs font-semibold transition-colors"
+                className="w-full sm:w-auto px-5 py-2 bg-cyan-500 hover:bg-cyan-400 text-[#07090E] rounded-sm text-xs font-bold transition-colors cursor-pointer"
               >
-                Close
+                Got It
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Bottom Control Dock */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex flex-wrap items-center justify-center gap-1.5 bg-[#0b0e17]/95 border border-slate-800 backdrop-blur-xl px-3.5 py-2 rounded-xl shadow-2xl max-w-[96vw]">
-        {/* Auto Spin Toggle */}
+      {/* Bottom Control Dock (Horizontally scrollable on narrow mobile screens) */}
+      <div className="absolute bottom-2.5 sm:bottom-3.5 left-1/2 -translate-x-1/2 z-10 flex items-center justify-start sm:justify-center gap-1 bg-[#07090E]/95 border border-[#1E2638] px-2 py-1.5 sm:px-3 rounded-sm max-w-[96vw] overflow-x-auto no-scrollbar shadow-xl">
         <button
           type="button"
           onClick={() => setAutoRotate(!autoRotate)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors whitespace-nowrap ${
+          className={`flex items-center gap-1.5 px-2 py-1 rounded-xs text-[11px] font-mono transition-colors whitespace-nowrap ${
             autoRotate
-              ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 font-semibold'
+              ? 'bg-cyan-500 text-[#07090E] font-bold'
               : 'text-slate-400 hover:text-white'
           }`}
           title="Toggle automatic globe rotation"
         >
-          <RotateCw className={`w-3.5 h-3.5 ${autoRotate ? 'animate-spin' : ''}`} style={{ animationDuration: '10s' }} />
-          <span>{autoRotate ? 'Spin: ON' : 'Spin: OFF'}</span>
+          <RotateCw className={`w-3 h-3 ${autoRotate ? 'animate-spin' : ''}`} style={{ animationDuration: '10s' }} />
+          <span>{autoRotate ? 'Spin: On' : 'Spin: Off'}</span>
         </button>
 
-        <span className="w-px h-4 bg-slate-800" />
+        <span className="w-px h-3.5 bg-[#1E2638]" />
 
-        {/* Country & City Map Names Toggle */}
         <button
           type="button"
           onClick={() => setShowLabels(!showLabels)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors whitespace-nowrap ${
+          className={`flex items-center gap-1.5 px-2 py-1 rounded-xs text-[11px] font-mono transition-colors whitespace-nowrap ${
             showLabels
-              ? 'bg-slate-800 text-white border border-slate-700'
+              ? 'bg-[#1E2638] text-white'
               : 'text-slate-400 hover:text-white'
           }`}
           title="Toggle country, province, and city names on the map"
         >
-          <Tag className="w-3.5 h-3.5 text-sky-400" />
-          <span>Map Names ({showLabels ? 'On' : 'Off'})</span>
+          <Tag className="w-3 h-3" />
+          <span>Names ({showLabels ? 'On' : 'Off'})</span>
         </button>
 
-        {/* Cities Pins Toggle */}
         <button
           type="button"
           onClick={() => setShowCities(!showCities)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors whitespace-nowrap ${
+          className={`flex items-center gap-1.5 px-2 py-1 rounded-xs text-[11px] font-mono transition-colors whitespace-nowrap ${
             showCities
-              ? 'bg-slate-800 text-white border border-slate-700'
+              ? 'bg-[#1E2638] text-white'
               : 'text-slate-400 hover:text-white'
           }`}
-          title="Toggle landmark city markers (Karachi, Sukkur, Larkana, etc.)"
+          title="Toggle city pins"
         >
-          <MapPin className="w-3.5 h-3.5" />
+          <MapPin className="w-3 h-3" />
           <span>Cities ({showCities ? 'On' : 'Off'})</span>
         </button>
 
-        {/* Vector Borders & Rivers Toggle */}
         <button
           type="button"
           onClick={() => setShowVectors(!showVectors)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors whitespace-nowrap ${
+          className={`flex items-center gap-1.5 px-2 py-1 rounded-xs text-[11px] font-mono transition-colors whitespace-nowrap ${
             showVectors
-              ? 'bg-slate-800 text-white border border-slate-700'
+              ? 'bg-[#1E2638] text-white'
               : 'text-slate-400 hover:text-white'
           }`}
-          title="Toggle HD vector borders, provinces, and Indus River lines"
+          title="Toggle borders and rivers"
         >
-          <Layers className="w-3.5 h-3.5" />
+          <Layers className="w-3 h-3" />
           <span>Borders ({showVectors ? 'On' : 'Off'})</span>
         </button>
 
-        {/* Flood Mode Filter Toggle */}
         {onToggleFloodMode && (
           <button
             type="button"
             onClick={onToggleFloodMode}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-xs text-[11px] font-mono transition-colors whitespace-nowrap ${
               isFloodMode
-                ? 'bg-sky-500 text-slate-950 font-semibold'
+                ? 'bg-cyan-500 text-[#07090E] font-bold'
                 : 'text-slate-400 hover:text-white'
             }`}
-            title="Inspect flood anomaly records and inundation halos"
+            title="Toggle flood anomaly layers"
           >
-            <Waves className="w-3.5 h-3.5" />
-            <span>Flood Layer ({isFloodMode ? `${selectedYear}` : 'Off'})</span>
+            <Waves className="w-3 h-3" />
+            <span>Flood ({isFloodMode ? 'On' : 'Off'})</span>
           </button>
         )}
 
-        {/* Clouds Toggle */}
         <button
           type="button"
           onClick={() => setShowClouds(!showClouds)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono transition-colors whitespace-nowrap ${
+          className={`flex items-center gap-1.5 px-2 py-1 rounded-xs text-[11px] font-mono transition-colors whitespace-nowrap ${
             showClouds
-              ? 'bg-slate-800 text-white border border-slate-700'
+              ? 'bg-[#1E2638] text-white'
               : 'text-slate-400 hover:text-white'
           }`}
-          title="Toggle NASA satellite clouds"
+          title="Toggle satellite clouds"
         >
-          <Cloud className="w-3.5 h-3.5" />
+          <Cloud className="w-3 h-3" />
           <span>Clouds ({showClouds ? 'On' : 'Off'})</span>
         </button>
 
-        <span className="w-px h-4 bg-slate-800" />
+        <span className="w-px h-3.5 bg-[#1E2638]" />
 
-        {/* Zoom Controls */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <button
             type="button"
             onClick={() => {
@@ -1519,7 +2043,7 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
               }
             }}
             aria-label="Zoom in"
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-xs text-slate-300 hover:text-white hover:bg-[#1E2638] transition-colors"
             title="Zoom In (Show District Cities & Rivers)"
           >
             <ZoomIn className="w-4 h-4" />
@@ -1534,7 +2058,7 @@ export const Earth3DGlobe: React.FC<Earth3DGlobeProps> = ({
               }
             }}
             aria-label="Zoom out"
-            className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-xs text-slate-300 hover:text-white hover:bg-[#1E2638] transition-colors"
             title="Zoom Out"
           >
             <ZoomOut className="w-4 h-4" />

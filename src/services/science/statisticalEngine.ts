@@ -491,11 +491,40 @@ export function analyzeEnvironmentalTrend(
   const times = validObs.map((_, i) => i);
   const values = validObs.map((o) => o.value);
 
+  // For multi-year monthly series (>= 24 observations), calculate monthly climatological anomalies
+  // so that periodic seasonal swings (e.g. 15°C winter to 38°C summer) do not cancel out
+  // the multi-year decadal trend in the non-parametric Mann-Kendall and Sen's Slope tests.
+  const isMultiYearMonthly = validObs.length >= 24 && validObs.some((o) => o.month !== undefined);
+  let trendValues = values;
+
+  if (isMultiYearMonthly) {
+    const monthSums = Array(12).fill(0);
+    const monthCounts = Array(12).fill(0);
+    validObs.forEach((o) => {
+      const mIdx = ((o.month || 1) - 1) % 12;
+      monthSums[mIdx] += o.value;
+      monthCounts[mIdx]++;
+    });
+    const monthMeans = monthSums.map((sum, i) => (monthCounts[i] > 0 ? sum / monthCounts[i] : 0));
+    trendValues = validObs.map((o) => {
+      const mIdx = ((o.month || 1) - 1) % 12;
+      return o.value - monthMeans[mIdx];
+    });
+  }
+
   // 3. Compute Statistical Tests
   const linReg = computeLinearRegression(times, values, alpha);
-  const mk = computeMannKendall(values, alpha);
-  const sens = computeSensSlope(times, values, alpha, true);
-  const autocorr = computeLag1Autocorrelation(values);
+  const mk = computeMannKendall(trendValues, alpha);
+  const sens = computeSensSlope(times, isMultiYearMonthly ? trendValues : values, alpha, true);
+  
+  // Re-center intercept to raw observation scale so trend line overlays on the chart
+  if (isMultiYearMonthly) {
+    const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
+    const midTime = times[Math.floor(times.length / 2)];
+    sens.intercept = rawMean - sens.slope * midTime;
+  }
+
+  const autocorr = computeLag1Autocorrelation(trendValues);
 
   // 4. Trend Direction & Classification
   let trendDirection: TrendDirection = 'stable';

@@ -92,6 +92,7 @@ export async function fetchNasaPowerSeries(opts: NasaPowerFetchOptions): Promise
 
   const startYear = opts.startYear || 2000;
   const endYear = opts.endYear || 2026;
+  const queryEndYear = Math.min(endYear, 2024);
   const community = opts.community || 'AG';
   const param = opts.variable;
 
@@ -104,7 +105,7 @@ export async function fetchNasaPowerSeries(opts: NasaPowerFetchOptions): Promise
     };
   }
 
-  const endpoint = `${NASA_POWER_BASE_URL}/temporal/monthly/point?parameters=${param}&community=${community}&longitude=${opts.longitude.toFixed(4)}&latitude=${opts.latitude.toFixed(4)}&start=${startYear}&end=${endYear}&format=JSON`;
+  const endpoint = `${NASA_POWER_BASE_URL}/temporal/monthly/point?parameters=${param}&community=${community}&longitude=${opts.longitude.toFixed(4)}&latitude=${opts.latitude.toFixed(4)}&start=${startYear}&end=${queryEndYear}&format=JSON`;
 
   try {
     const data = await fetchWithRetry(endpoint);
@@ -195,13 +196,14 @@ export async function fetchNasaPowerAllParametersForPoint(
     'GWETROOT',
     'GWETTOP',
   ];
+  const queryEndYear = Math.min(endYear, 2024);
   const cacheKey = `multipower:${latitude.toFixed(3)}:${longitude.toFixed(3)}:${startYear}:${endYear}`;
   const cached = multiParamCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return { parameters: cached.data, provenance: cached.provenance };
   }
 
-  const endpoint = `${NASA_POWER_BASE_URL}/temporal/monthly/point?parameters=${paramsList.join(',')}&community=AG&longitude=${longitude.toFixed(4)}&latitude=${latitude.toFixed(4)}&start=${startYear}&end=${endYear}&format=JSON`;
+  const endpoint = `${NASA_POWER_BASE_URL}/temporal/monthly/point?parameters=${paramsList.join(',')}&community=AG&longitude=${longitude.toFixed(4)}&latitude=${latitude.toFixed(4)}&start=${startYear}&end=${queryEndYear}&format=JSON`;
 
   try {
     const json = await fetchWithRetry(endpoint, 1, 800);

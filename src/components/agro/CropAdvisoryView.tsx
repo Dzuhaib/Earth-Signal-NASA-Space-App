@@ -1,882 +1,637 @@
 /**
- * EarthSignal — NASA Agroclimatology Crop Suitability & 3-Month Projected Yield Assessment
- * Synchronized with today's live date (new Date()) and optional target planting date picker.
- * Evaluates each crop against the city's live NASA POWER observations and multi-year historical
- * environmental trends (Theil-Sen slope & inter-annual variability) across the upcoming 3-month
- * and 6-month windows.
+ * EarthSignal — Visual-First Crop & Yield Forecast
+ * Clean, visual-rich agroclimatology dashboard with 6-year mini spark-bars,
+ * SVG circular biomass vigor rings, and radial crop suitability gauges.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Sprout,
+  Thermometer,
+  CloudRain,
+  Droplets,
   Calendar,
   MapPin,
-  ArrowRight,
-  Compass,
   TrendingUp,
   TrendingDown,
-  Scale,
-  Layers,
+  Minus,
+  CheckCircle2,
+  AlertTriangle,
+  Info,
 } from 'lucide-react';
+import { GeographicRegion, CityMarker } from '../../types/earthsignal';
 import { ACCURATE_CITIES } from '../../services/nasa/nasaRegistry';
-import { CityMarker } from '../../types/earthsignal';
 
 interface CropAdvisoryViewProps {
+  selectedRegion?: GeographicRegion;
   defaultCityId?: string;
+  onSelectCoordinates?: (lat: number, lon: number) => void;
   onInspectInExplorer?: (city: CityMarker) => void;
 }
 
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+interface YearlySeriesPoint {
+  year: number;
+  value: number;
+}
+
+interface TrendIndicator {
+  historicalMean: number;
+  annualSlope: number;
+  totalChange6Yr: number;
+  stdDev?: number;
+  direction: 'upward' | 'downward' | 'stable';
+  yearlySeries: YearlySeriesPoint[];
+}
+
+interface MonthlyStage {
+  monthStep: number;
+  monthLabel: string;
+  phenologyStage: string;
+  projectedT2M: number;
+  projectedT2MMax: number;
+  projectedRootWetness: number;
+  projectedPrecipMm: number;
+  t2mDrift?: number;
+  stageBiomassIndexPct: number;
+  stageNote: string;
+}
+
+interface YieldAssessment3M {
+  windowLabel: string;
+  baselineYieldTonHa: number;
+  projectedYieldTonHa: number;
+  baselineMaundsPerAcre: number;
+  projectedMaundsPerAcre: number;
+  yieldDeltaPct: number;
+  confidenceRangeTonHa: [number, number];
+  yieldOutlookLabel: string;
+  agronomicYieldIntervention: string;
+  monthlyStages: MonthlyStage[];
+}
+
+interface CropRecommendation {
+  id: string;
+  name: string;
+  category: string;
+  suitabilityScore: number;
+  thermalScore?: number;
+  hydroScore?: number;
+  verdict: string;
+  sowingStatus: string;
+  sowingWindow: string;
+  waterNeedLabel: string;
+  thermalMatch?: string;
+  waterMatch?: string;
+  atmosphericRisk?: string;
+  farmerAction: string;
+  yieldAssessment3M: YieldAssessment3M;
+}
+
+interface AgroApiResponse {
+  status: string;
+  referenceDate?: {
+    iso: string;
+    formatted: string;
+    year: number;
+    month: number;
+    day: number;
+  };
+  location?: {
+    city_id: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+  };
+  seasonMode?: string;
+  seasonLabel?: string;
+  summaryIndicators: {
+    avgT2M: number;
+    maxCanopyC: number;
+    minNightC: number;
+    totalPrecipMm: number;
+    avgRootWetness: number;
+    avgHumidityPct: number;
+    avgThermalDriftC?: number;
+  };
+  threeMonthHistoricalTrends: {
+    windowLabel: string;
+    T2M: TrendIndicator;
+    T2M_MAX?: TrendIndicator;
+    PRECTOTCORR: TrendIndicator;
+    GWETROOT: TrendIndicator;
+    RH2M?: TrendIndicator;
+  };
+  upcomingMonths?: Array<{
+    step: number;
+    month: number;
+    year: number;
+    monthName: string;
+    shortLabel: string;
+    isCurrentMonth?: boolean;
+    t2m: number;
+    t2m_max: number;
+    t2m_min: number;
+    precip_mm: number;
+    rh_pct: number;
+    root_wetness: number;
+  }>;
+  recommendations: CropRecommendation[];
+}
+
 export const CropAdvisoryView: React.FC<CropAdvisoryViewProps> = ({
+  selectedRegion,
   defaultCityId = 'city_sukkur',
+  onSelectCoordinates,
   onInspectInExplorer,
 }) => {
-  const [selectedCityId, setSelectedCityId] = useState<string>(defaultCityId);
-  const [seasonMode, setSeasonMode] = useState<'upcoming_6m' | 'rabi' | 'kharif'>('upcoming_6m');
-  const [targetDate, setTargetDate] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  });
-  const [regionFilter, setRegionFilter] = useState<'sindh' | 'pakistan' | 'all'>('sindh');
-  const [yieldUnit, setYieldUnit] = useState<'maunds_acre' | 'ton_ha'>('maunds_acre');
-  const [advisoryData, setAdvisoryData] = useState<any | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [selectedCropId, setSelectedCropId] = useState<string | null>(null);
+  const pakistaniHubs = useMemo(
+    () => ACCURATE_CITIES.filter((c) => c.country === 'Pakistan'),
+    []
+  );
 
-  const filteredCities = ACCURATE_CITIES.filter((c) => {
-    if (regionFilter === 'sindh') return c.province === 'Sindh';
-    if (regionFilter === 'pakistan') return c.country === 'Pakistan';
-    return true;
+  const [selectedCity, setSelectedCity] = useState<CityMarker>(() => {
+    if (selectedRegion) {
+      const match = pakistaniHubs.find(
+        (c) =>
+          Math.abs(c.latitude - selectedRegion.latitude) < 0.35 &&
+          Math.abs(c.longitude - selectedRegion.longitude) < 0.35
+      );
+      if (match) return match;
+    }
+    return pakistaniHubs.find((c) => c.id === defaultCityId) || pakistaniHubs[0];
   });
 
-  const activeCity =
-    ACCURATE_CITIES.find((c) => c.id === selectedCityId) || ACCURATE_CITIES[0];
+  // Default to Month 3 (April, 0-indexed) and 2026
+  const [selectedMonth, setSelectedMonth] = useState<number>(3);
+  const [selectedYear, setSelectedYear] = useState<number>(2026);
+  const [selectedCropId, setSelectedCropId] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(true);
+  const [agroData, setAgroData] = useState<AgroApiResponse | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setIsLoading(true);
+    setLoading(true);
+    setFetchError(null);
 
-    fetch(
-      `/api/v1/agro/crop-advisory?city_id=${selectedCityId}&lat=${activeCity.latitude}&lon=${activeCity.longitude}&season=${seasonMode}&date=${encodeURIComponent(targetDate)}`
-    )
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled && data?.status === 'success') {
-          setAdvisoryData(data);
-          if (data.recommendations?.length > 0) {
-            setSelectedCropId((prev) => {
-              const exists = data.recommendations.some((r: any) => r.id === prev);
-              return exists ? prev : data.recommendations[0].id;
-            });
-          }
+    const queryParams = new URLSearchParams({
+      city_id: selectedCity.id,
+      lat: String(selectedCity.latitude),
+      lon: String(selectedCity.longitude),
+      month: String(selectedMonth),
+      year: String(selectedYear),
+    });
+
+    fetch(`/api/crop-advisory?${queryParams.toString()}`)
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Satellite service returned ${res.status}`);
         }
+        return res.json();
       })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
+      .then((data: AgroApiResponse) => {
+        if (cancelled) return;
+        if (data && data.status === 'success' && data.recommendations?.length > 0) {
+          setAgroData(data);
+          // Retain selection if valid, otherwise pick first crop
+          setSelectedCropId((prev) => {
+            const exists = data.recommendations.some((c) => c.id === prev);
+            return exists ? prev : data.recommendations[0].id;
+          });
+        } else {
+          throw new Error('Incomplete data payload');
+        }
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Agro fetch error:', err);
+        setFetchError(err.message);
+        setLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [selectedCityId, seasonMode, targetDate, activeCity.latitude, activeCity.longitude]);
+  }, [selectedCity.id, selectedCity.latitude, selectedCity.longitude, selectedMonth, selectedYear]);
 
-  const recommendations: any[] = advisoryData?.recommendations || [];
-  const upcomingMonths: any[] = advisoryData?.upcomingMonths || [];
-  const indicators = advisoryData?.summaryIndicators;
-  const refDate = advisoryData?.referenceDate;
-  const historicalTrends3M = advisoryData?.threeMonthHistoricalTrends;
-  const focusedCrop =
-    recommendations.find((r) => r.id === selectedCropId) || recommendations[0];
-  const yield3M = focusedCrop?.yieldAssessment3M;
+  const m1 = selectedMonth;
+  const m3 = (selectedMonth + 2) % 12;
 
-  const formatSigned = (val: number, decimals = 1, suffix = '') => {
-    const num = Number(val) || 0;
-    const formatted = Math.abs(num).toFixed(decimals);
-    if (num > 0) return `+${formatted}${suffix}`;
-    if (num < 0) return `-${formatted}${suffix}`;
-    return `0.${'0'.repeat(decimals)}${suffix}`;
-  };
+  const activeCrop = useMemo(() => {
+    if (!agroData?.recommendations?.length) return null;
+    return (
+      agroData.recommendations.find((c) => c.id === selectedCropId) ||
+      agroData.recommendations[0]
+    );
+  }, [agroData, selectedCropId]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Top Editorial Header & Structured Control Bar */}
-      <div className="space-y-5">
-        {/* Tier 1: Full-Width Simple Title & Date */}
-        <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400">
-            <Sprout className="w-3.5 h-3.5 shrink-0" />
-            <span>Updated for {refDate?.formatted || targetDate}</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-950 dark:text-white">
-            Crop Planner &amp; 3-Month Yield Forecast
-          </h1>
-          <p className="text-sm text-slate-600 dark:text-slate-400 max-w-3xl leading-relaxed">
-            Pick your city and planting date to see which crops will grow best and how much yield to expect over the next 3 months.
-          </p>
-        </div>
-
-        {/* Tier 2: Structured 3-Column Parameter Control Bar */}
-        <div className="bg-white dark:bg-[#0B0E17] border border-slate-200 dark:border-slate-800 rounded-xl p-4 grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-          {/* Column 1: Planting Date Selector (3 cols) */}
-          <div className="md:col-span-3 space-y-1.5">
-            <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500">
-              Reference Planting Date
-            </label>
-            <div className="flex items-center justify-between gap-2 h-9 px-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-                <span className="text-slate-500 font-mono text-[11px]">Date:</span>
-              </div>
-              <input
-                type="date"
-                value={targetDate}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    setTargetDate(e.target.value);
-                    setSeasonMode('upcoming_6m');
-                  }
-                }}
-                className="bg-transparent font-mono text-xs text-slate-900 dark:text-white focus:outline-none text-right"
-              />
+    <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 space-y-6 pb-20 pt-4">
+      {/* 1. COMPACT HEADER & 3-PARAMETER CONTROL BAR */}
+      <div className="bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-md p-4 sm:p-5 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-mono font-bold tracking-widest uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                NASA Live Agroclimatology
+              </span>
+              <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500">
+                MERRA-2 & GLDAS-2.1
+              </span>
             </div>
+            <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-950 dark:text-white tracking-tight">
+              {selectedCity.name} — {SHORT_MONTHS[m1]} to {SHORT_MONTHS[m3]} {selectedYear}
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              3-Month rolling phenology forecast & crop suitability analysis for Indus Basin agriculture.
+            </p>
           </div>
 
-          {/* Column 2: Season Window Selector (5 cols) */}
-          <div className="md:col-span-5 space-y-1.5">
-            <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500">
-              Seasonal Evaluation Window
-            </label>
-            <div className="grid grid-cols-3 gap-1 p-1 h-9 items-center bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-medium">
-              {[
-                { id: 'upcoming_6m', label: 'From Selected Date' },
-                { id: 'rabi', label: 'Rabi (Nov–Apr)' },
-                { id: 'kharif', label: 'Kharif (May–Oct)' },
-              ].map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => setSeasonMode(s.id as any)}
-                  className={`h-full rounded-md transition-colors truncate px-2 text-center ${
-                    seasonMode === s.id
-                      ? 'bg-white dark:bg-sky-500 text-slate-950 font-semibold shadow-2xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
+          {/* 3 Selectors (City, Month Window, Year) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 min-w-[320px] lg:w-auto">
+            {/* Hub Selector */}
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#111622] border border-slate-200 dark:border-[#1E2638] rounded-sm px-3 py-2">
+              <MapPin className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <label htmlFor="hub-select" className="block text-[9px] font-mono uppercase text-slate-400 font-semibold leading-none mb-0.5">
+                  Agricultural Hub
+                </label>
+                <select
+                  id="hub-select"
+                  value={selectedCity.id}
+                  onChange={(e) => {
+                    const city = pakistaniHubs.find((c) => c.id === e.target.value);
+                    if (city) {
+                      setSelectedCity(city);
+                      if (onSelectCoordinates) {
+                        onSelectCoordinates(city.latitude, city.longitude);
+                      }
+                    }
+                  }}
+                  className="w-full bg-transparent text-xs font-semibold text-slate-900 dark:text-white focus:outline-none cursor-pointer truncate"
                 >
-                  {s.label}
-                </button>
-              ))}
+                  {pakistaniHubs.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-white dark:bg-[#0D111A]">
+                      {c.name} ({c.province || 'PK'})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          </div>
 
-          {/* Column 3: Yield Unit Toggle (4 cols) */}
-          <div className="md:col-span-4 space-y-1.5">
-            <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-500">
-              Yield Measurement Unit
-            </label>
-            <div className="grid grid-cols-2 gap-1 p-1 h-9 items-center bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-mono">
-              <button
-                type="button"
-                onClick={() => setYieldUnit('maunds_acre')}
-                className={`h-full rounded-md transition-colors truncate px-2 text-center ${
-                  yieldUnit === 'maunds_acre'
-                    ? 'bg-white dark:bg-slate-800 text-slate-950 dark:text-white font-semibold shadow-2xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                Maunds / Acre (40kg)
-              </button>
-              <button
-                type="button"
-                onClick={() => setYieldUnit('ton_ha')}
-                className={`h-full rounded-md transition-colors truncate px-2 text-center ${
-                  yieldUnit === 'ton_ha'
-                    ? 'bg-white dark:bg-slate-800 text-slate-950 dark:text-white font-semibold shadow-2xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                Tons / Ha (t/ha)
-              </button>
+            {/* Start Month */}
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#111622] border border-slate-200 dark:border-[#1E2638] rounded-sm px-3 py-2">
+              <Calendar className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <label htmlFor="month-select" className="block text-[9px] font-mono uppercase text-slate-400 font-semibold leading-none mb-0.5">
+                  3-Month Window
+                </label>
+                <select
+                  id="month-select"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                  className="w-full bg-transparent text-xs font-semibold text-slate-900 dark:text-white focus:outline-none cursor-pointer truncate"
+                >
+                  {MONTH_NAMES.map((m, idx) => (
+                    <option key={m} value={idx} className="bg-white dark:bg-[#0D111A]">
+                      {m} – {SHORT_MONTHS[(idx + 2) % 12]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Year Selector */}
+            <div className="flex items-center gap-2 bg-slate-50 dark:bg-[#111622] border border-slate-200 dark:border-[#1E2638] rounded-sm px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <label htmlFor="year-select" className="block text-[9px] font-mono uppercase text-slate-400 font-semibold leading-none mb-0.5">
+                  Forecast Year
+                </label>
+                <select
+                  id="year-select"
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  className="w-full bg-transparent text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer truncate"
+                >
+                  {[2026, 2025, 2024, 2023, 2022, 2021, 2020].map((yr) => (
+                    <option key={yr} value={yr} className="bg-white dark:bg-[#0D111A]">
+                      {yr}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main 12-Column Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left 4 Columns: City Selection, 3-Month Historical NASA Trends & 6-Month Envelope */}
-        <div className="lg:col-span-4 space-y-6">
-          {/* 1. City Selector Panel */}
-          <div className="bg-white dark:bg-[#0B0E17] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200">
-                1. Agricultural District / City
-              </span>
-              <MapPin className="w-3.5 h-3.5 text-sky-500" />
-            </div>
+      {/* Loading state */}
+      {loading && !agroData && (
+        <div className="w-full h-80 bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-md flex flex-col items-center justify-center gap-3">
+          <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-mono text-slate-500">
+            Querying NASA Langley Agroclimatology (MERRA-2 / GLDAS)...
+          </span>
+        </div>
+      )}
 
-            {/* Region Filter Tabs */}
-            <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-medium text-center">
-              {[
-                { id: 'sindh', label: 'Sindh Hubs' },
-                { id: 'pakistan', label: 'All Pakistan' },
-                { id: 'all', label: 'Global' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setRegionFilter(tab.id as any)}
-                  className={`py-1 rounded-md transition-colors ${
-                    regionFilter === tab.id
-                      ? 'bg-white dark:bg-slate-800 text-slate-950 dark:text-white font-semibold'
-                      : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Scrollable City Buttons */}
-            <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/70 pr-1">
-              {filteredCities.map((city) => {
-                const isSelected = city.id === selectedCityId;
-                return (
-                  <button
-                    key={city.id}
-                    type="button"
-                    onClick={() => setSelectedCityId(city.id)}
-                    className={`w-full text-left py-2.5 px-3 transition-colors flex items-center justify-between ${
-                      isSelected
-                        ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold'
-                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-900/50'
-                    }`}
-                  >
-                    <div>
-                      <div className="text-xs">{city.name}</div>
-                      <div className="text-[10px] font-mono text-slate-500">
-                        {city.province || city.country} · {city.keyFeature}
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-mono text-slate-400">
-                      {city.latitude.toFixed(1)}°N
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+      {/* Error state */}
+      {fetchError && !agroData && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-md p-4 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+          <div className="text-xs text-amber-700 dark:text-amber-300">
+            Could not fetch real-time NASA satellite forecast. Retrying in background...
           </div>
+        </div>
+      )}
 
-          {/* 2. 3-Month Historical NASA Trend Analysis Card */}
-          {historicalTrends3M && (
-            <div className="bg-white dark:bg-[#0B0E17] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
-              <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+      {/* MAIN DATA VIEW */}
+      {agroData && (
+        <>
+          {/* 2. THREE CLIMATOLOGICAL CONDITION CARDS WITH SPARK-BARS */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Canopy Heat (T2M) */}
+            <div className="bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-md p-5 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                  <Thermometer className="w-4 h-4 text-orange-500 shrink-0" />
+                  <span>Canopy Temperature</span>
+                </span>
+                <span className="text-xs font-mono font-bold text-orange-500 flex items-center gap-1 tabular-nums">
+                  {agroData.threeMonthHistoricalTrends?.T2M?.annualSlope >= 0 ? (
+                    <TrendingUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <TrendingDown className="w-3.5 h-3.5" />
+                  )}
+                  {agroData.threeMonthHistoricalTrends?.T2M?.annualSlope >= 0 ? '+' : ''}
+                  {(agroData.threeMonthHistoricalTrends?.T2M?.annualSlope * 10).toFixed(2)}°C / dec
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between pt-1">
                 <div>
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200 block">
-                    2. 3-Month Historical NASA Trends
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-500">
-                    Window: {historicalTrends3M.windowLabel} ({historicalTrends3M.archiveYears})
-                  </span>
-                </div>
-                <Layers className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              </div>
-
-              <div className="divide-y divide-slate-100 dark:divide-slate-800/80 text-xs font-mono">
-                {[
-                  historicalTrends3M.t2m,
-                  historicalTrends3M.t2mMax,
-                  historicalTrends3M.gwetroot,
-                  historicalTrends3M.precip,
-                  historicalTrends3M.rh2m,
-                ]
-                  .filter(Boolean)
-                  .map((metric: any) => {
-                    const isPositive = metric.annualSlope >= 0;
-                    return (
-                      <div key={metric.parameter} className="py-2.5 flex items-center justify-between gap-2">
-                        <div>
-                          <div className="font-sans font-medium text-slate-800 dark:text-slate-200 text-xs">
-                            {metric.label}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            Mean: {metric.mean} {metric.unit} · ±{metric.stdDev} SD
-                          </div>
-                        </div>
-                        <div className="text-right tabular-nums">
-                          <div
-                            className={`font-semibold ${
-                              metric.parameter === 'GWETROOT'
-                                ? isPositive
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : 'text-amber-600 dark:text-amber-400'
-                                : metric.parameter.startsWith('T2M')
-                                ? isPositive
-                                  ? 'text-amber-600 dark:text-amber-400'
-                                  : 'text-sky-600 dark:text-sky-400'
-                                : 'text-slate-800 dark:text-slate-200'
-                            }`}
-                          >
-                            {formatSigned(
-                              metric.annualSlope,
-                              metric.parameter === 'GWETROOT' ? 3 : 2,
-                              ` ${metric.unit}/yr`
-                            )}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            6-Yr Shift: {formatSigned(metric.totalChange6Yr, metric.parameter === 'GWETROOT' ? 2 : 1, ` ${metric.unit}`)}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-
-              {/* Historical Yearly Observations Mini-Table for the 3-Month Window */}
-              {historicalTrends3M.t2m?.yearlySeries?.length > 0 && (
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
-                  <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
-                    NASA Archive ({historicalTrends3M.windowLabel} Mean by Year)
+                  <div className="font-mono text-3xl font-extrabold text-slate-950 dark:text-white tabular-nums tracking-tight">
+                    {agroData.summaryIndicators?.avgT2M?.toFixed(1) ?? '--'}°C
                   </div>
-                  <div className="grid grid-cols-6 gap-1 text-center font-mono text-[10px]">
-                    {historicalTrends3M.t2m.yearlySeries.map((pt: any, i: number) => {
-                      const gwPt = historicalTrends3M.gwetroot?.yearlySeries?.[i];
+                  <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                    Peak Canopy Max: {agroData.summaryIndicators?.maxCanopyC?.toFixed(1) ?? '--'}°C
+                  </div>
+                </div>
+
+                {/* Historical mini spark-bars */}
+                {agroData.threeMonthHistoricalTrends?.T2M?.yearlySeries && (
+                  <div className="flex items-end gap-1.5 h-12">
+                    {agroData.threeMonthHistoricalTrends.T2M.yearlySeries.map((row) => {
+                      const hPct = Math.max(20, Math.min(100, ((row.value - 15) / 28) * 100));
                       return (
-                        <div
-                          key={pt.year}
-                          className="p-1.5 rounded bg-slate-50 dark:bg-slate-900/70 border border-slate-200/70 dark:border-slate-800"
-                        >
-                          <div className="text-slate-400">{pt.year}</div>
-                          <div className="font-semibold text-slate-900 dark:text-white mt-0.5">
-                            {pt.value.toFixed(1)}°
+                        <div key={row.year} className="flex flex-col items-center gap-1" title={`${row.year}: ${row.value}°C`}>
+                          <div className="w-3.5 bg-slate-100 dark:bg-[#141B29] rounded-xs h-9 flex items-end overflow-hidden">
+                            <div
+                              className="w-full bg-orange-500 rounded-xs transition-all duration-300"
+                              style={{ height: `${hPct}%` }}
+                            />
                           </div>
-                          {gwPt && (
-                            <div className="text-[9px] text-sky-600 dark:text-sky-400">
-                              {Math.round(gwPt.value * 100)}%w
-                            </div>
-                          )}
+                          <span className="text-[9px] font-mono text-slate-400 tabular-nums">
+                            {String(row.year).slice(2)}
+                          </span>
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          )}
 
-          {/* 3. City Seasonal Atmosphere Envelope Card */}
-          {indicators && (
-            <div className="bg-white dark:bg-[#0B0E17] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-                <div>
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-200 block">
-                    3. 6-Month Rolling Envelope
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-500">
-                    {advisoryData?.location?.name}
-                  </span>
-                </div>
-                <Compass className="w-4 h-4 text-sky-500" />
+            {/* Precipitation (PRECTOTCORR) */}
+            <div className="bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-md p-5 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                  <CloudRain className="w-4 h-4 text-cyan-500 shrink-0" />
+                  <span>3-Month Rainfall</span>
+                </span>
+                <span className="text-xs font-mono font-bold text-cyan-500 flex items-center gap-1 tabular-nums">
+                  {agroData.threeMonthHistoricalTrends?.PRECTOTCORR?.annualSlope >= 0 ? (
+                    <TrendingUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <TrendingDown className="w-3.5 h-3.5" />
+                  )}
+                  {agroData.threeMonthHistoricalTrends?.PRECTOTCORR?.annualSlope >= 0 ? '+' : ''}
+                  {(agroData.threeMonthHistoricalTrends?.PRECTOTCORR?.annualSlope * 10).toFixed(1)} mm / dec
+                </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-baseline justify-between pt-1">
                 <div>
-                  <span className="text-[11px] font-mono text-slate-500 block">6-MO MEAN T2M</span>
-                  <span className="text-xl font-bold font-mono tabular-nums text-slate-950 dark:text-white">
-                    {indicators.avgT2M} °C
-                  </span>
-                  <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 block">
-                    Drift: {indicators.avgThermalDriftC >= 0 ? `+${indicators.avgThermalDriftC}` : indicators.avgThermalDriftC} °C
-                  </span>
+                  <div className="font-mono text-3xl font-extrabold text-slate-950 dark:text-white tabular-nums tracking-tight">
+                    {agroData.summaryIndicators?.totalPrecipMm?.toFixed(0) ?? '--'} mm
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                    {agroData.threeMonthHistoricalTrends?.PRECTOTCORR?.direction === 'upward'
+                      ? 'Wetting precipitation signal'
+                      : 'Arid / dry spell regime'}
+                  </div>
                 </div>
 
+                {/* Historical mini spark-bars */}
+                {agroData.threeMonthHistoricalTrends?.PRECTOTCORR?.yearlySeries && (
+                  <div className="flex items-end gap-1.5 h-12">
+                    {agroData.threeMonthHistoricalTrends.PRECTOTCORR.yearlySeries.map((row) => {
+                      const seriesMax = Math.max(
+                        40,
+                        ...agroData.threeMonthHistoricalTrends.PRECTOTCORR.yearlySeries.map((x) => x.value)
+                      );
+                      const hPct = Math.max(15, Math.min(100, (row.value / seriesMax) * 100));
+                      return (
+                        <div key={row.year} className="flex flex-col items-center gap-1" title={`${row.year}: ${row.value.toFixed(1)} mm`}>
+                          <div className="w-3.5 bg-slate-100 dark:bg-[#141B29] rounded-xs h-9 flex items-end overflow-hidden">
+                            <div
+                              className="w-full bg-cyan-500 rounded-xs transition-all duration-300"
+                              style={{ height: `${hPct}%` }}
+                            />
+                          </div>
+                          <span className="text-[9px] font-mono text-slate-400 tabular-nums">
+                            {String(row.year).slice(2)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Root-Zone Moisture (GWETROOT) */}
+            <div className="bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-md p-5 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                  <Droplets className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span>Root-Zone Soil Saturation</span>
+                </span>
+                <span className="text-xs font-mono font-bold text-emerald-500 flex items-center gap-1 tabular-nums">
+                  {Math.abs(agroData.threeMonthHistoricalTrends?.GWETROOT?.annualSlope ?? 0) < 0.005 ? (
+                    <Minus className="w-3.5 h-3.5" />
+                  ) : agroData.threeMonthHistoricalTrends?.GWETROOT?.annualSlope >= 0 ? (
+                    <TrendingUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <TrendingDown className="w-3.5 h-3.5" />
+                  )}
+                  {agroData.threeMonthHistoricalTrends?.GWETROOT?.annualSlope >= 0 ? '+' : ''}
+                  {((agroData.threeMonthHistoricalTrends?.GWETROOT?.annualSlope ?? 0) * 1000).toFixed(1)}‰ / dec
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between pt-1">
                 <div>
-                  <span className="text-[11px] font-mono text-slate-500 block">WINDOW PEAK HIGH</span>
-                  <span className="text-xl font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
-                    {indicators.maxCanopyC} °C
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-500 block">
-                    Night Min: {indicators.minNightC} °C
-                  </span>
+                  <div className="font-mono text-3xl font-extrabold text-slate-950 dark:text-white tabular-nums tracking-tight">
+                    {((agroData.summaryIndicators?.avgRootWetness ?? 0.35) * 100).toFixed(0)}%
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+                    NASA GLDAS-2.1 root layer profile
+                  </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
-                  <span className="text-[11px] font-mono text-slate-500 block">ROOT SOIL WETNESS</span>
-                  <span className="text-xl font-bold font-mono tabular-nums text-sky-600 dark:text-sky-400">
-                    {indicators.avgRootWetness}{' '}
-                    <span className="text-xs font-normal text-slate-500">({Math.round(indicators.avgRootWetness * 100)}%)</span>
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-500 block">
-                    GLDAS-2.1 Root Zone
-                  </span>
-                </div>
+                {/* Historical mini spark-bars */}
+                {agroData.threeMonthHistoricalTrends?.GWETROOT?.yearlySeries && (
+                  <div className="flex items-end gap-1.5 h-12">
+                    {agroData.threeMonthHistoricalTrends.GWETROOT.yearlySeries.map((row) => {
+                      const hPct = Math.max(15, Math.min(100, row.value * 100));
+                      return (
+                        <div key={row.year} className="flex flex-col items-center gap-1" title={`${row.year}: ${(row.value * 100).toFixed(1)}%`}>
+                          <div className="w-3.5 bg-slate-100 dark:bg-[#141B29] rounded-xs h-9 flex items-end overflow-hidden">
+                            <div
+                              className="w-full bg-emerald-500 rounded-xs transition-all duration-300"
+                              style={{ height: `${hPct}%` }}
+                            />
+                          </div>
+                          <span className="text-[9px] font-mono text-slate-400 tabular-nums">
+                            {String(row.year).slice(2)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
 
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
-                  <span className="text-[11px] font-mono text-slate-500 block">EXPECTED RAINFALL</span>
-                  <span className="text-xl font-bold font-mono tabular-nums text-slate-950 dark:text-white">
-                    {indicators.totalPrecipMm} mm
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-500 block">
-                    Mean RH: {indicators.avgHumidityPct}%
-                  </span>
-                </div>
+          {/* 3. CROP SUITABILITY RANKINGS WITH RADIAL SVG GAUGES */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-display text-lg font-bold text-slate-950 dark:text-white">
+                  Crop Suitability Ranking ({agroData.recommendations.length} Evaluated)
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Click any crop below to view its 3-month growth stages and yield outlook.
+                </p>
               </div>
 
               {onInspectInExplorer && (
                 <button
                   type="button"
-                  onClick={() => onInspectInExplorer(activeCity)}
-                  className="w-full py-2 px-3 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-xs font-medium text-slate-700 dark:text-slate-300 transition-colors flex items-center justify-center gap-1.5"
+                  onClick={() => onInspectInExplorer(selectedCity)}
+                  className="text-xs font-mono font-semibold text-cyan-600 dark:text-cyan-400 hover:underline cursor-pointer flex items-center gap-1"
                 >
-                  <span>View {activeCity.name} on 3D Globe</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  Inspect {selectedCity.name} on 3D Map →
                 </button>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Right 8 Columns: 3-Month Yield Assessment Spotlight + 6-Month Trajectory + Ranked Crop Matrix */}
-        <div className="lg:col-span-8 space-y-8">
-          {/* 1. NEW: 3-Month Projected Crop Yield Assessment Card */}
-          {focusedCrop && yield3M && (
-            <div className="bg-white dark:bg-[#0B0E17] border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-6">
-              {/* Top Header */}
-              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400">
-                    <Scale className="w-3.5 h-3.5" />
-                    <span>3-MONTH PROJECTED CROP YIELD ASSESSMENT</span>
-                    <span>·</span>
-                    <span>WINDOW: {yield3M.windowLabel}</span>
-                  </div>
-                  <h2 className="text-xl font-bold text-slate-950 dark:text-white">
-                    {focusedCrop.name} — {activeCity.name}
-                  </h2>
-                  <p className="text-xs text-slate-500 font-mono">
-                    {focusedCrop.category} · {focusedCrop.sowingStatus} · Suitability Score: {focusedCrop.suitabilityScore}%
-                  </p>
-                </div>
-
-                <div className="sm:text-right font-mono shrink-0">
-                  <div
-                    className={`inline-flex items-center gap-1 text-2xl font-bold tabular-nums ${
-                      yield3M.yieldDeltaPct >= 2
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : yield3M.yieldDeltaPct >= -5
-                        ? 'text-sky-600 dark:text-sky-400'
-                        : yield3M.yieldDeltaPct >= -14
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-rose-600 dark:text-rose-400'
-                    }`}
-                  >
-                    {yield3M.yieldDeltaPct >= 0 ? (
-                      <TrendingUp className="w-5 h-5" />
-                    ) : (
-                      <TrendingDown className="w-5 h-5" />
-                    )}
-                    <span>{formatSigned(yield3M.yieldDeltaPct, 1, '% Yield Shift')}</span>
-                  </div>
-                  <div className="text-xs text-slate-500 mt-0.5">{yield3M.yieldOutlookLabel}</div>
-                </div>
-              </div>
-
-              {/* 4-Column Quantitative Yield Readout Strip */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 font-mono">
-                <div>
-                  <span className="text-[10px] uppercase text-slate-500 block">
-                    Regional Baseline Yield
-                  </span>
-                  <span className="text-lg font-bold tabular-nums text-slate-800 dark:text-slate-200">
-                    {yieldUnit === 'maunds_acre'
-                      ? `${yield3M.baselineMaundsPerAcre} md/ac`
-                      : `${yield3M.baselineYieldTonHa} t/ha`}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    {yieldUnit === 'maunds_acre'
-                      ? `(${yield3M.baselineYieldTonHa} t/ha)`
-                      : `(${yield3M.baselineMaundsPerAcre} maunds/ac)`}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] uppercase text-slate-500 block">
-                    3-Mo Projected Yield
-                  </span>
-                  <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {yieldUnit === 'maunds_acre'
-                      ? `${yield3M.projectedMaundsPerAcre} md/ac`
-                      : `${yield3M.projectedYieldTonHa} t/ha`}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    {yieldUnit === 'maunds_acre'
-                      ? `(${yield3M.projectedYieldTonHa} t/ha)`
-                      : `(${yield3M.projectedMaundsPerAcre} maunds/ac)`}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] uppercase text-slate-500 block">
-                    90% Confidence Range
-                  </span>
-                  <span className="text-sm font-semibold tabular-nums text-slate-900 dark:text-white block mt-0.5">
-                    {yieldUnit === 'maunds_acre'
-                      ? `${yield3M.confidenceRangeMaunds[0]} – ${yield3M.confidenceRangeMaunds[1]} md/ac`
-                      : `${yield3M.confidenceRangeTonHa[0]} – ${yield3M.confidenceRangeTonHa[1]} t/ha`}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    From NASA Inter-Annual SD
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[10px] uppercase text-slate-500 block">
-                    Net Yield Difference
-                  </span>
-                  <span
-                    className={`text-sm font-semibold tabular-nums block mt-0.5 ${
-                      yield3M.yieldDeltaPct >= 0
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-amber-600 dark:text-amber-400'
-                    }`}
-                  >
-                    {yieldUnit === 'maunds_acre'
-                      ? `${formatSigned(
-                          yield3M.projectedMaundsPerAcre - yield3M.baselineMaundsPerAcre,
-                          1,
-                          ' md/ac'
-                        )}`
-                      : `${formatSigned(
-                          yield3M.projectedYieldTonHa - yield3M.baselineYieldTonHa,
-                          2,
-                          ' t/ha'
-                        )}`}
-                  </span>
-                  <span className="text-[10px] text-slate-500 block">
-                    vs. Historical Norm
-                  </span>
-                </div>
-              </div>
-
-              {/* Environmental Trend Driver Breakdown & Phenology Progression */}
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                {/* Left 5 cols: NASA Trend Driver Breakdown */}
-                <div className="md:col-span-5 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                    NASA Environmental Trend Drivers (3-Mo)
-                  </div>
-                  <div className="space-y-2.5 text-xs font-mono">
-                    {[
-                      {
-                        label: 'Thermal Trend & Canopy Heat (T2M / T2M_MAX)',
-                        val: yield3M.driverBreakdown?.thermalTrendImpactPct ?? 0,
-                      },
-                      {
-                        label: 'Root-Zone Soil Moisture Trend (GWETROOT)',
-                        val: yield3M.driverBreakdown?.soilMoistureTrendImpactPct ?? 0,
-                      },
-                      {
-                        label: 'Rainfall & Humidity Trend (PRECTOTCORR / RH2M)',
-                        val: yield3M.driverBreakdown?.precipHumidityImpactPct ?? 0,
-                      },
-                      {
-                        label: 'Seasonal Sowing Window Alignment',
-                        val: yield3M.driverBreakdown?.offSeasonPenaltyPct ?? 0,
-                      },
-                    ].map((d) => {
-                      const pct = Number(d.val) || 0;
-                      const barWidth = Math.min(100, Math.max(6, Math.abs(pct) * 4.5));
-                      return (
-                        <div key={d.label} className="space-y-1">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-sans text-slate-600 dark:text-slate-400">
-                              {d.label}
-                            </span>
-                            <span
-                              className={`font-semibold tabular-nums ${
-                                pct > 0
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : pct < 0
-                                  ? 'text-rose-600 dark:text-rose-400'
-                                  : 'text-slate-500'
-                              }`}
-                            >
-                              {formatSigned(pct, 1, '%')}
-                            </span>
-                          </div>
-                          <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                pct > 0
-                                  ? 'bg-emerald-500'
-                                  : pct < 0
-                                  ? 'bg-rose-500'
-                                  : 'bg-slate-400'
-                              }`}
-                              style={{ width: `${barWidth}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Right 7 cols: Month 1, Month 2, Month 3 Phenological Stage Progression */}
-                <div className="md:col-span-7 space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                    3-Month Phenological Stage &amp; Biomass Progression
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {(yield3M.monthlyStages || []).map((st: any) => (
-                      <div
-                        key={st.monthStep}
-                        className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 flex flex-col justify-between space-y-2"
-                      >
-                        <div>
-                          <div className="flex items-center justify-between text-[11px] font-mono text-slate-500">
-                            <span>MONTH 0{st.monthStep}</span>
-                            <span className="text-slate-900 dark:text-white font-semibold">
-                              {st.monthLabel}
-                            </span>
-                          </div>
-                          <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
-                            {st.phenologyStage}
-                          </div>
-                        </div>
-
-                        <div className="space-y-1 pt-2 border-t border-slate-200/70 dark:border-slate-800/80 text-[11px] font-mono tabular-nums">
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Mean / Max:</span>
-                            <span className="text-slate-800 dark:text-slate-200">
-                              {st.projectedT2M}° / {st.projectedT2MMax}°C
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Root Wetness:</span>
-                            <span className="text-sky-600 dark:text-sky-400">
-                              {Math.round(st.projectedRootWetness * 100)}%
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Biomass Vigor:</span>
-                            <span
-                              className={`font-semibold ${
-                                st.stageBiomassIndexPct >= 80
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : st.stageBiomassIndexPct >= 65
-                                  ? 'text-amber-600 dark:text-amber-400'
-                                  : 'text-rose-600 dark:text-rose-400'
-                              }`}
-                            >
-                              {st.stageBiomassIndexPct}%
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="text-[11px] text-slate-600 dark:text-slate-400 pt-1 border-t border-slate-200/50 dark:border-slate-800/50">
-                          {st.stageNote}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom Agronomic Intervention & Detailed Fit */}
-              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                <div className="space-y-1">
-                  <div className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 uppercase">
-                    3-Month Yield Protection Intervention
-                  </div>
-                  <p className="text-slate-800 dark:text-slate-200 font-medium leading-relaxed">
-                    {yield3M.agronomicYieldIntervention}
-                  </p>
-                  <div className="text-slate-500 font-mono text-[11px] pt-1">
-                    {focusedCrop.thermalMatch} · {focusedCrop.waterMatch}
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="font-mono text-[11px] text-sky-600 dark:text-sky-400 uppercase">
-                    Recommended Sowing &amp; Field Action
-                  </div>
-                  <p className="text-slate-800 dark:text-slate-200 font-medium leading-relaxed">
-                    {focusedCrop.farmerAction}
-                  </p>
-                  <div className="text-slate-500 font-mono text-[11px] pt-1">
-                    {focusedCrop.atmosphericRisk}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 2. Month-by-Month Upcoming Atmospheric Forecast Table */}
-          <div className="bg-white dark:bg-[#0B0E17] border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div>
-                <h2 className="text-base font-bold text-slate-950 dark:text-white">
-                  Upcoming 6-Month Agroclimatology Trajectory — {activeCity.name}
-                </h2>
-                <p className="text-xs font-mono text-slate-500">
-                  {advisoryData?.seasonLabel || 'NASA POWER Monthly Projection'}
-                </p>
-              </div>
-              {isLoading && (
-                <span className="text-xs font-mono text-sky-500">Querying NASA POWER AG...</span>
-              )}
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-[11px] font-mono text-slate-500 uppercase">
-                    <th className="py-2.5 pr-3">Month</th>
-                    <th className="py-2.5 px-3">Mean Temp (T2M)</th>
-                    <th className="py-2.5 px-3">Canopy Max (T2M_MAX)</th>
-                    <th className="py-2.5 px-3">Night Min (T2M_MIN)</th>
-                    <th className="py-2.5 px-3">Rain (PRECTOTCORR)</th>
-                    <th className="py-2.5 px-3">Root Moisture (GWETROOT)</th>
-                    <th className="py-2.5 pl-3 text-right">Humidity (RH2M)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200/60 dark:divide-slate-800/70 font-mono tabular-nums">
-                  {upcomingMonths.map((m, idx) => (
-                    <tr
-                      key={m.step}
-                      className={`hover:bg-slate-50 dark:hover:bg-slate-900/40 ${
-                        idx < 3 ? 'bg-emerald-500/[0.03]' : ''
-                      }`}
-                    >
-                      <td className="py-2.5 pr-3 font-sans font-semibold text-slate-900 dark:text-white">
-                        {m.shortLabel}
-                        {m.isCurrentMonth && (
-                          <span className="ml-1.5 text-[10px] font-mono text-sky-500">(Current)</span>
-                        )}
-                        {idx < 3 && !m.isCurrentMonth && (
-                          <span className="ml-1.5 text-[10px] font-mono text-emerald-600 dark:text-emerald-400">
-                            (3M Window)
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-800 dark:text-slate-200">
-                        {m.t2m.toFixed(1)} °C
-                      </td>
-                      <td
-                        className={`py-2.5 px-3 font-semibold ${
-                          m.t2m_max >= 40
-                            ? 'text-rose-600 dark:text-rose-400'
-                            : m.t2m_max >= 34
-                            ? 'text-amber-600 dark:text-amber-400'
-                            : 'text-slate-700 dark:text-slate-300'
-                        }`}
-                      >
-                        {m.t2m_max.toFixed(1)} °C
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">
-                        {m.t2m_min.toFixed(1)} °C
-                      </td>
-                      <td
-                        className={`py-2.5 px-3 ${
-                          m.precip_mm > 80
-                            ? 'text-sky-600 dark:text-sky-400 font-semibold'
-                            : 'text-slate-700 dark:text-slate-300'
-                        }`}
-                      >
-                        {m.precip_mm.toFixed(1)} mm
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
-                        {m.root_wetness.toFixed(2)} ({Math.round(m.root_wetness * 100)}%)
-                      </td>
-                      <td className="py-2.5 pl-3 text-right text-slate-600 dark:text-slate-400">
-                        {m.rh_pct}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* 3. Complete Ranked Crop Suitability & 3-Month Yield Comparison Matrix */}
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-base font-bold text-slate-950 dark:text-white">
-                Ranked Crop Suitability &amp; 3-Month Yield Comparison — {activeCity.name}
-              </h3>
-              <span className="text-xs font-mono text-slate-500">
-                Click any crop to inspect its 3-month NASA yield model
-              </span>
-            </div>
-
-            <div className="divide-y divide-slate-200 dark:divide-slate-800 border-y border-slate-200 dark:border-slate-800">
-              {recommendations.map((crop, idx) => {
-                const isSelected = focusedCrop?.id === crop.id;
-                const cropYield = crop.yieldAssessment3M;
-                const scoreColor =
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {agroData.recommendations.map((crop) => {
+                const isSelected = activeCrop?.id === crop.id;
+                const ringColor =
                   crop.suitabilityScore >= 80
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : crop.suitabilityScore >= 64
-                    ? 'text-sky-600 dark:text-sky-400'
-                    : crop.suitabilityScore >= 46
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-rose-600 dark:text-rose-400';
+                    ? '#10b981' // emerald
+                    : crop.suitabilityScore >= 60
+                    ? '#06b6d4' // cyan
+                    : crop.suitabilityScore >= 40
+                    ? '#f59e0b' // amber
+                    : '#94a3b8'; // slate
 
                 return (
                   <button
                     key={crop.id}
                     type="button"
                     onClick={() => setSelectedCropId(crop.id)}
-                    className={`w-full text-left py-4 px-4 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                    className={`text-left p-4 rounded-md border transition-all cursor-pointer relative flex flex-col justify-between gap-3 ${
                       isSelected
-                        ? 'bg-slate-100/90 dark:bg-slate-900/90'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-900/30'
+                        ? 'bg-emerald-500/10 border-emerald-500 shadow-sm ring-1 ring-emerald-500/50'
+                        : 'bg-white dark:bg-[#0D111A] border-slate-200 dark:border-[#1E2638] hover:border-slate-300 dark:hover:border-slate-600'
                     }`}
                   >
-                    <div className="space-y-1 max-w-xl">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-mono text-slate-400">0{idx + 1}.</span>
-                        <span className="text-sm font-bold text-slate-950 dark:text-white">
-                          {crop.name}
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <Sprout className={`w-4 h-4 shrink-0 ${isSelected ? 'text-emerald-500' : 'text-slate-400'}`} />
+                          <h3 className="font-display text-sm font-bold text-slate-950 dark:text-white truncate">
+                            {crop.name}
+                          </h3>
+                        </div>
+                        <div className="text-[10px] font-mono text-slate-400 truncate">
+                          {crop.category}
+                        </div>
+                      </div>
+
+                      {/* Circular Suitability SVG Ring */}
+                      <div className="relative w-12 h-12 shrink-0 flex items-center justify-center">
+                        <svg className="w-12 h-12 -rotate-90" viewBox="0 0 48 48">
+                          <circle
+                            cx="24"
+                            cy="24"
+                            r="19"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            className="text-slate-200 dark:text-[#182030]"
+                          />
+                          <circle
+                            cx="24"
+                            cy="24"
+                            r="19"
+                            fill="none"
+                            stroke={ringColor}
+                            strokeWidth="4"
+                            strokeLinecap="round"
+                            strokeDasharray={`${(crop.suitabilityScore / 100) * 119.38} 119.38`}
+                          />
+                        </svg>
+                        <span className="absolute font-mono text-[11px] font-bold text-slate-950 dark:text-white tabular-nums">
+                          {crop.suitabilityScore}%
                         </span>
-                        <span className="text-xs text-slate-500">· {crop.sowingStatus}</span>
-                      </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-400 pl-6">
-                        {crop.farmerAction}
-                      </div>
-                      <div className="text-[11px] font-mono text-slate-500 pl-6">
-                        Window: {crop.sowingWindow} · {crop.thermalMatch}
                       </div>
                     </div>
 
-                    <div className="flex sm:items-center gap-6 justify-between sm:justify-end shrink-0 pl-6 sm:pl-0 font-mono">
-                      {cropYield && (
-                        <div className="text-left sm:text-right">
-                          <div className="text-[10px] uppercase text-slate-500">
-                            3-Mo Projected Yield
-                          </div>
-                          <div className="text-sm font-bold tabular-nums text-slate-900 dark:text-white">
-                            {yieldUnit === 'maunds_acre'
-                              ? `${cropYield.projectedMaundsPerAcre} md/ac`
-                              : `${cropYield.projectedYieldTonHa} t/ha`}
-                          </div>
-                          <div
-                            className={`text-[11px] tabular-nums ${
-                              cropYield.yieldDeltaPct >= 0
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                            }`}
-                          >
-                            {formatSigned(cropYield.yieldDeltaPct, 1, '% vs norm')}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="text-right">
-                        <div className={`text-lg font-bold tabular-nums ${scoreColor}`}>
-                          {crop.suitabilityScore}%
-                        </div>
-                        <div className="text-[11px] text-slate-500">{crop.verdict}</div>
+                    <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-[#161D2B]">
+                      <div className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-slate-400">Verdict</span>
+                        <span
+                          className={`font-semibold truncate max-w-[150px] ${
+                            crop.suitabilityScore >= 70
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : crop.suitabilityScore >= 40
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {crop.verdict}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-slate-400">Sowing</span>
+                        <span className="text-slate-700 dark:text-slate-300 truncate max-w-[150px]">
+                          {crop.sowingStatus}
+                        </span>
                       </div>
                     </div>
                   </button>
@@ -884,8 +639,163 @@ export const CropAdvisoryView: React.FC<CropAdvisoryViewProps> = ({
               })}
             </div>
           </div>
-        </div>
-      </div>
+
+          {/* 4. ACTIVE CROP 3-MONTH PHENOLOGY & YIELD ASSESSMENT */}
+          {activeCrop && (
+            <div className="bg-white dark:bg-[#0D111A] border border-slate-200 dark:border-[#1E2638] rounded-md p-5 space-y-5 shadow-xs">
+              {/* Header Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 dark:border-[#1E2638]">
+                <div className="space-y-0.5">
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-emerald-600 dark:text-emerald-400 font-bold">
+                    3-Month Growth Trajectory & Satellite Yield Projection
+                  </div>
+                  <h3 className="font-display text-xl font-extrabold text-slate-950 dark:text-white">
+                    {activeCrop.name}
+                  </h3>
+                  <div className="text-xs font-mono text-slate-500">
+                    Sowing Window: {activeCrop.sowingWindow} · Water: {activeCrop.waterNeedLabel}
+                  </div>
+                </div>
+
+                {/* Yield Delta Badge */}
+                {activeCrop.yieldAssessment3M && (
+                  <div className="flex items-center gap-3 bg-slate-50 dark:bg-[#111622] border border-slate-200 dark:border-[#1E2638] rounded-sm px-4 py-2">
+                    <div>
+                      <div className="text-[10px] font-mono uppercase text-slate-400">
+                        Projected Yield
+                      </div>
+                      <div className="font-mono text-base font-bold text-slate-950 dark:text-white tabular-nums">
+                        {activeCrop.yieldAssessment3M.projectedYieldTonHa.toFixed(2)} t/ha
+                      </div>
+                    </div>
+
+                    <div className="h-7 w-px bg-slate-200 dark:bg-[#1E2638]" />
+
+                    <div>
+                      <div className="text-[10px] font-mono uppercase text-slate-400">
+                        Historical Baseline
+                      </div>
+                      <div className="font-mono text-base font-bold text-slate-500 tabular-nums">
+                        {activeCrop.yieldAssessment3M.baselineYieldTonHa.toFixed(2)} t/ha
+                      </div>
+                    </div>
+
+                    <div className="h-7 w-px bg-slate-200 dark:bg-[#1E2638]" />
+
+                    <div className="text-right">
+                      <div className="text-[10px] font-mono uppercase text-slate-400">
+                        Impact Delta
+                      </div>
+                      <div
+                        className={`font-mono text-base font-extrabold tabular-nums flex items-center gap-0.5 ${
+                          activeCrop.yieldAssessment3M.yieldDeltaPct >= 0
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-amber-500'
+                        }`}
+                      >
+                        {activeCrop.yieldAssessment3M.yieldDeltaPct >= 0 ? '+' : ''}
+                        {activeCrop.yieldAssessment3M.yieldDeltaPct.toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Agronomic Intervention Alert */}
+              <div className="bg-slate-50 dark:bg-[#090C12] border border-slate-200 dark:border-[#1E2638] rounded-sm p-3.5 flex items-start gap-3">
+                <Info className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-0.5">
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    Agronomic Recommendation:{' '}
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-300">
+                    {activeCrop.farmerAction}
+                  </span>
+                </div>
+              </div>
+
+              {/* 3 Monthly Phenology Stages */}
+              {activeCrop.yieldAssessment3M?.monthlyStages && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {activeCrop.yieldAssessment3M.monthlyStages.map((stage, idx) => (
+                    <div
+                      key={stage.monthLabel || idx}
+                      className="bg-slate-50 dark:bg-[#090C12] border border-slate-200 dark:border-[#1E2638] rounded-sm p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-bold uppercase">
+                            Month 0{idx + 1} · {stage.monthLabel}
+                          </span>
+                          <h4 className="font-display text-sm font-bold text-slate-950 dark:text-white mt-0.5">
+                            {stage.phenologyStage}
+                          </h4>
+                        </div>
+
+                        {/* Biomass Vigor Circular Gauge */}
+                        <div className="relative w-11 h-11 shrink-0 flex items-center justify-center">
+                          <svg className="w-11 h-11 -rotate-90" viewBox="0 0 44 44">
+                            <circle
+                              cx="22"
+                              cy="22"
+                              r="17"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="3.5"
+                              className="text-slate-200 dark:text-[#182030]"
+                            />
+                            <circle
+                              cx="22"
+                              cy="22"
+                              r="17"
+                              fill="none"
+                              stroke="#10b981"
+                              strokeWidth="3.5"
+                              strokeLinecap="round"
+                              strokeDasharray={`${(Math.min(100, stage.stageBiomassIndexPct) / 100) * 106.8} 106.8`}
+                            />
+                          </svg>
+                          <span className="absolute font-mono text-[10px] font-bold text-slate-900 dark:text-white tabular-nums">
+                            {stage.stageBiomassIndexPct}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Climate indicators for this month */}
+                      <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-200/60 dark:border-[#161D2B] text-center">
+                        <div>
+                          <div className="text-[9px] font-mono uppercase text-slate-400">Mean Temp</div>
+                          <div className="text-xs font-mono font-bold text-slate-900 dark:text-white tabular-nums">
+                            {stage.projectedT2M?.toFixed(1)}°C
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-mono uppercase text-slate-400">Peak Max</div>
+                          <div className="text-xs font-mono font-bold text-orange-500 tabular-nums">
+                            {stage.projectedT2MMax?.toFixed(1)}°C
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] font-mono uppercase text-slate-400">Rainfall</div>
+                          <div className="text-xs font-mono font-bold text-cyan-500 tabular-nums">
+                            {stage.projectedPrecipMm?.toFixed(0)} mm
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Stage note */}
+                      <div className="text-xs text-slate-600 dark:text-slate-400 flex items-start gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                        <span className="line-clamp-2">{stage.stageNote}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
