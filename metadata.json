@@ -1,0 +1,6 @@
+{
+  "name": "EarthSignal",
+  "description": "Discover What Is Changing on Earth — AI-assisted Earth intelligence platform detecting environmental trends and statistical significance from NASA Earth observation datasets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

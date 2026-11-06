@@ -1,0 +1,1565 @@
+# EARTHSIGNAL — COMPLETE MASTER DEVELOPMENT PROMPT
+## NASA Space Apps Challenge 2026
+### Selected Challenge: Be An Earth System Trend Detective!
+
+---
+
+# 1. YOUR ROLE
+
+Act as a senior full-stack engineer, geospatial data engineer, Python scientific computing engineer, climate data analyst, AI engineer, UI/UX designer, and technical architect.
+
+You are responsible for designing and implementing a complete, production-quality application named **EarthSignal**.
+
+Do not build a static prototype or a collection of disconnected dashboard screens.
+
+Build a working scientific application that retrieves real NASA Earth science data, processes environmental observations, detects trends, evaluates statistical significance, visualizes geographical changes, and explains findings using AI.
+
+You must implement the complete project in sequential phases, verify each phase, and continue until all phases are completed.
+
+Do not stop after writing an architecture document.
+
+Do not ask for approval between phases unless an essential external credential, inaccessible service, or genuinely blocking decision is required.
+
+---
+
+# 2. PROJECT IDENTITY
+
+**Product Name:** EarthSignal
+
+**Tagline:** Discover What Is Changing on Earth.
+
+**Product Category:** Earth Science Intelligence and Environmental Trend Detection Platform.
+
+**Selected NASA Challenge:** Be An Earth System Trend Detective!
+
+## Product Vision
+
+EarthSignal is an AI-assisted Earth intelligence platform that helps researchers, scientists, environmental analysts, students, and the public discover meaningful environmental changes using NASA Earth observation datasets and Earth science models.
+
+The platform must answer four fundamental questions:
+
+1. WHAT is changing?
+2. WHERE is it changing?
+3. HOW MUCH is it changing?
+4. IS the observed change statistically significant?
+
+Our system must allow users to explore environmental variables, analyze historical measurements, detect trends, understand geographical patterns, compare regions, and investigate scientific findings.
+
+## Geographic Strategy
+
+Build a globally accessible platform.
+
+Use Pakistan as our flagship demonstration region, particularly Sindh, but do not restrict the application to Pakistan.
+
+Users must be able to investigate other countries, provinces, regions, and geographical coordinates.
+
+---
+
+# 3. OFFICIAL CHALLENGE REQUIREMENTS
+
+The application must fulfill the actual NASA challenge requirements.
+
+### Requirement 1: Environmental Variable Selection
+
+Users must be able to select environmental variables obtained from NASA Earth science missions or produced by NASA Earth science models.
+
+### Requirement 2: Historical Visualization
+
+Visualize how environmental variables change over time.
+
+### Requirement 3: Identify What Is Changing
+
+Detect increasing, decreasing, stable, and statistically inconclusive environmental trends.
+
+### Requirement 4: Identify Where It Is Changing
+
+Show geographical regions experiencing environmental changes.
+
+### Requirement 5: Quantify Changes
+
+Calculate the magnitude and rate of environmental changes with appropriate units.
+
+### Requirement 6: Statistical Significance
+
+Determine whether the observed changes are statistically significant using appropriate scientific methods.
+
+Every feature must contribute to these requirements.
+
+---
+
+# 4. TECHNOLOGY STACK
+
+Use the following architecture unless the existing repository has a justified alternative.
+
+## Frontend
+
+- Next.js with App Router
+- React
+- TypeScript
+- Tailwind CSS
+- shadcn/ui
+- Lucide icons
+- Plotly.js for scientific visualization
+- MapLibre GL JS for interactive maps
+- React Query / TanStack Query for API state management
+- Zustand only where global client state is necessary
+
+## Backend
+
+- Python 3.12+
+- FastAPI
+- Pydantic
+- SQLAlchemy
+- Pandas
+- NumPy
+- SciPy
+- xarray
+- netCDF4
+- h5py where necessary
+- GeoPandas
+- Shapely
+
+## Scientific Analysis
+
+- pyMannKendall or a verified equivalent
+- SciPy
+- Statsmodels
+- Scikit-learn where appropriate
+
+## Database
+
+- PostgreSQL
+- PostGIS
+- Redis for caching and background-job coordination if justified
+
+## Infrastructure
+
+- Frontend: Vercel
+- Backend: Docker-compatible Python hosting
+- Database: Managed PostgreSQL with PostGIS support
+- Object storage: Optional for large processed datasets
+
+Do not introduce unnecessary infrastructure or services.
+
+---
+
+# 5. NASA DATA SOURCES — CRITICAL REQUIREMENT
+
+This is the most important part of the project.
+
+Use real, documented NASA datasets.
+
+Never generate fake NASA measurements.
+
+Never claim that a dataset is satellite-observed when it is actually model-derived or based on ground observations.
+
+For every data source, document its origin, processing level, temporal coverage, spatial resolution, units, limitations, and access method.
+
+## DATA SOURCE A: NASA POWER
+
+Official website:
+https://power.larc.nasa.gov/
+
+API documentation:
+https://power.larc.nasa.gov/api/pages/
+
+NASA Open Data:
+https://data.nasa.gov/dataset/prediction-of-worldwide-energy-resources-power
+
+Purpose:
+
+Use NASA POWER as the easiest initial data integration source for environmental and meteorological time series.
+
+NASA POWER provides REST APIs and analysis-ready data at hourly, daily, monthly, annual, and climatological temporal levels, depending on the product.
+
+### Initial variables to investigate
+
+| Variable | Parameter candidate | Scientific purpose |
+|---|---|---|
+| Air temperature | T2M | Temperature trends |
+| Maximum temperature | T2M_MAX | Heat extremes |
+| Minimum temperature | T2M_MIN | Cold-temperature trends |
+| Precipitation | PRECTOTCORR | Rainfall patterns |
+| Relative humidity | RH2M | Atmospheric moisture |
+| Root-zone soil wetness | GWETROOT | Soil moisture conditions |
+| Surface soil wetness | GWETTOP | Surface moisture |
+
+Important:
+
+Verify every parameter against the official NASA POWER API parameter catalog before implementation.
+
+Do not assume every parameter is available at every temporal resolution or community.
+
+### API integration
+
+Use the documented POWER temporal APIs.
+
+Example endpoint structure for monthly point data:
+
+https://power.larc.nasa.gov/api/temporal/monthly/point
+
+The implementation must construct requests using:
+
+- Parameters
+- Community
+- Longitude
+- Latitude
+- Start year
+- End year
+- Output format
+
+Use the official OpenAPI specifications and parameter metadata as the source of truth.
+
+Example conceptual request:
+
+GET /api/temporal/monthly/point
+
+Parameters:
+T2M,PRECTOTCORR,RH2M
+
+Community:
+AG
+
+Location:
+User-selected longitude and latitude
+
+Output:
+JSON
+
+Implement:
+
+1. Parameter validation.
+2. Coordinate validation.
+3. Request timeouts.
+4. Retries with exponential backoff.
+5. Rate-limit handling.
+6. Response validation.
+7. Unit normalization.
+8. Missing-value handling.
+9. Metadata storage.
+10. Caching.
+
+NASA POWER API access should not be made dependent on a NASA API key unless the current documentation specifically requires it.
+
+Do not expose credentials unnecessarily.
+
+---
+
+## DATA SOURCE B: NASA GISTEMP v4
+
+Official website:
+https://data.giss.nasa.gov/gistemp/
+
+Data downloads:
+https://data.giss.nasa.gov/gistemp/data_v4.html
+
+Purpose:
+
+Use NASA GISTEMP to investigate long-term temperature anomalies and historical temperature changes.
+
+Available products include:
+
+- Monthly temperature anomaly tables.
+- Global and hemispheric averages.
+- Zonal annual means.
+- Gridded monthly temperature anomaly NetCDF data.
+- Compressed Zarr data.
+
+### Required implementation
+
+1. Retrieve official monthly temperature anomaly datasets.
+2. Parse CSV or text tables.
+3. Support gridded NetCDF or Zarr where needed.
+4. Preserve baseline-period metadata.
+5. Preserve temperature anomaly units.
+6. Support historical time-series analysis.
+7. Generate temperature anomaly maps when using gridded products.
+
+Important scientific distinction:
+
+GISTEMP is an analysis product that combines land-surface station observations and sea-surface temperature information. Do not describe it as direct satellite-only measurement.
+
+Use it as a NASA-produced temperature analysis dataset and document its methodology.
+
+Do not use global averages to make unsupported claims about local geographical trends.
+
+---
+
+## DATA SOURCE C: NASA GLDAS
+
+Official website:
+https://ldas.gsfc.nasa.gov/gldas/
+
+Dataset documentation:
+https://ldas.gsfc.nasa.gov/gldas/dataset
+
+NASA Earthdata:
+https://earthdata.nasa.gov/
+
+Purpose:
+
+Use GLDAS to investigate land-surface environmental changes.
+
+### Variables to investigate
+
+- Soil moisture.
+- Evapotranspiration.
+- Surface runoff.
+- Root-zone moisture.
+- Surface temperature.
+- Land-surface water conditions.
+
+### Dataset selection
+
+Investigate GLDAS-2.0, GLDAS-2.1 and GLDAS-2.2.
+
+Choose the appropriate collection based on:
+
+- Temporal coverage.
+- Spatial resolution.
+- Variable availability.
+- Model version.
+- Scientific suitability.
+- Geographic coverage.
+
+GLDAS-2.0 has historical coverage extending from 1948 to 2014, while GLDAS-2.1 covers 2000 onward, and GLDAS-2.2 covers 2003 onward according to NASA's published dataset specifications. Verify current collection versions and availability before use.
+
+### Data access
+
+Use supported NASA Earthdata access services.
+
+Investigate:
+
+- Earthdata Search.
+- Common Metadata Repository (CMR).
+- Earthdata Cloud.
+- Supported cloud-hosted data access.
+- Documented OPeNDAP or subset services where currently available.
+
+Important:
+
+NASA GES DISC is transitioning away from its legacy on-premises HTTPS servers. Do not rely on old GES DISC server URLs without verifying current availability.
+
+Implement authentication through Earthdata Login when required.
+
+Never store Earthdata credentials in frontend code.
+
+Never commit tokens or passwords to GitHub.
+
+---
+
+## DATA SOURCE D: NASA MERRA-2
+
+Official documentation:
+https://gmao.gsfc.nasa.gov/reanalysis/MERRA-2/
+
+NASA Earthdata:
+https://earthdata.nasa.gov/
+
+Purpose:
+
+Use MERRA-2 as a global atmospheric reanalysis source for investigating long-term atmospheric changes.
+
+Potential variables:
+
+- Air temperature.
+- Atmospheric humidity.
+- Wind speed and components.
+- Precipitation.
+- Surface pressure.
+- Atmospheric water vapor.
+
+Use MERRA-2 when its temporal coverage, spatial resolution, and variables are scientifically appropriate.
+
+Implement its data access through currently supported NASA Earthdata services.
+
+Do not use a legacy server URL as a permanent integration strategy.
+
+---
+
+## DATA SOURCE E: NASA GRACE / GRACE-FO
+
+Official information:
+https://grace.jpl.nasa.gov/
+
+NASA Earthdata:
+https://earthdata.nasa.gov/
+
+Purpose:
+
+Provide an optional water-resource analysis module.
+
+Investigate terrestrial water storage anomalies and changes.
+
+Possible use cases:
+
+- Water storage decline.
+- Regional water availability changes.
+- Long-term hydrological patterns.
+
+Important:
+
+GRACE observations have relatively coarse spatial resolution and require careful interpretation.
+
+Do not present GRACE-derived terrestrial water storage as direct local groundwater measurements.
+
+Clearly document spatial limitations and the distinction between water storage anomalies and groundwater estimates.
+
+---
+
+# 6. DATA ACCESS ARCHITECTURE
+
+Create a modular NASA data integration system.
+
+Suggested backend structure:
+
+backend/
+  app/
+    integrations/
+      nasa/
+        power/
+        gistemp/
+        gldas/
+        merra2/
+        grace/
+        earthdata/
+        cmr/
+        base.py
+        registry.py
+      services/
+      schemas/
+      models/
+      api/
+      analysis/
+      database/
+      core/
+      tests/
+
+Every dataset connector must implement a common interface.
+
+Conceptual interface:
+
+- get_metadata()
+- validate_parameters()
+- fetch_data()
+- normalize_data()
+- validate_response()
+- return_provenance()
+
+Create a centralized dataset registry.
+
+Every dataset entry must contain:
+
+- Dataset ID.
+- Dataset name.
+- Provider.
+- Product version.
+- Variable name.
+- Variable description.
+- Unit.
+- Temporal resolution.
+- Spatial resolution.
+- Geographic coverage.
+- Temporal coverage.
+- Processing level.
+- Source URL.
+- Access method.
+- Authentication requirement.
+- Update frequency.
+- Known limitations.
+
+Build a dataset catalog endpoint so the frontend can discover supported datasets dynamically.
+
+Never hardcode dataset metadata independently in multiple frontend components.
+
+---
+
+# 7. PHASE 0 — REPOSITORY INSPECTION AND ARCHITECTURE
+
+Start by inspecting the existing project repository.
+
+Do not destroy or overwrite existing working code.
+
+Tasks:
+
+1. Inspect all existing files.
+2. Identify the current framework and dependencies.
+3. Check existing frontend and backend architecture.
+4. Identify reusable components.
+5. Inspect existing environment configuration.
+6. Identify existing database integrations.
+7. Verify development scripts.
+8. Identify missing dependencies.
+9. Prepare a clear implementation plan.
+
+Create:
+
+- PROJECT_ARCHITECTURE.md
+- DATA_SOURCES.md
+- DEVELOPMENT_ROADMAP.md
+- ENVIRONMENT_VARIABLES.md
+
+Deliverable:
+
+A documented project architecture and verified NASA data-source strategy.
+
+Proceed to Phase 1.
+
+---
+
+# 8. PHASE 1 — NASA DATA INTEGRATION
+
+Build the actual NASA data ingestion layer.
+
+### Tasks
+
+1. Implement NASA POWER integration first.
+2. Retrieve historical temperature data.
+3. Retrieve precipitation data.
+4. Retrieve humidity data.
+5. Validate all parameters.
+6. Implement GISTEMP integration.
+7. Implement the GLDAS connector using currently supported access methods.
+8. Prepare MERRA-2 and GRACE connectors where feasible.
+9. Normalize timestamps and units.
+10. Handle missing and invalid observations.
+11. Store dataset metadata.
+12. Implement caching.
+13. Add robust error handling.
+
+### Important requirements
+
+Do not download unnecessarily large datasets.
+
+Implement spatial and temporal subsetting.
+
+Prefer monthly data for long-term climate analysis unless higher temporal resolution is scientifically required.
+
+Implement rate limiting and retries.
+
+Store raw source metadata alongside processed data.
+
+Every observation must retain its provenance.
+
+### Testing
+
+Test:
+
+- Valid location requests.
+- Invalid coordinates.
+- Missing API responses.
+- Empty datasets.
+- Missing measurements.
+- Incorrect units.
+- Network failures.
+- Authentication failures.
+- Dataset updates.
+
+Create automated integration tests.
+
+Deliverable:
+
+A functioning NASA data ingestion layer that retrieves and validates real environmental data.
+
+---
+
+# 9. PHASE 2 — SCIENTIFIC ANALYSIS ENGINE
+
+This is the core intelligence of EarthSignal.
+
+Do not make the AI model responsible for statistical calculations.
+
+Implement a deterministic Python analysis engine.
+
+## 9.1 Data preparation
+
+Implement:
+
+- Missing-data detection.
+- Duplicate observation detection.
+- Temporal sorting.
+- Unit validation.
+- Outlier investigation.
+- Seasonal grouping.
+- Monthly and annual aggregation.
+- Baseline anomaly calculation.
+- Data coverage assessment.
+
+Never silently interpolate large missing periods.
+
+Document every transformation.
+
+## 9.2 Trend detection
+
+Implement:
+
+### A. Linear Regression
+
+Calculate:
+
+- Slope.
+- Intercept.
+- R-squared.
+- P-value.
+- Confidence intervals.
+
+### B. Mann-Kendall Test
+
+Calculate:
+
+- Test statistic.
+- S statistic.
+- Kendall's tau.
+- P-value.
+- Trend direction.
+- Significance status.
+
+### C. Sen's Slope
+
+Calculate the robust median slope.
+
+Report the actual unit of change.
+
+For example:
+
+°C per decade.
+
+mm per year.
+
+Percentage per decade.
+
+Do not use a generic slope unit.
+
+### D. Seasonal Mann-Kendall
+
+Implement seasonal trend detection where appropriate for monthly or seasonal observations.
+
+### E. Autocorrelation Handling
+
+Check for temporal autocorrelation.
+
+Use appropriate modified Mann-Kendall or pre-whitening methods when justified.
+
+Do not treat autocorrelated observations as independent without explanation.
+
+### F. Multiple Hypothesis Testing
+
+When analyzing thousands of grid cells or multiple variables:
+
+- Implement false discovery rate correction.
+- Prefer Benjamini-Hochberg where appropriate.
+- Preserve raw and adjusted p-values.
+- Clearly distinguish local significance from field-level significance.
+
+### G. Confidence Intervals
+
+Provide appropriate confidence intervals for slope estimates.
+
+Report uncertainty.
+
+## 9.3 Trend classification
+
+Each analyzed result must be classified into one of these states:
+
+- Significant increasing trend.
+- Significant decreasing trend.
+- No statistically significant trend.
+- Insufficient data.
+- Analysis unavailable.
+
+Never classify an insignificant result as a confirmed increase or decrease.
+
+## 9.4 Analysis output schema
+
+Create a consistent analysis response:
+
+{
+  "dataset_id": "dataset_identifier",
+  "variable": "temperature",
+  "unit": "degrees_celsius",
+  "location": {
+    "name": "Sindh",
+    "latitude": null,
+    "longitude": null
+  },
+  "period": {
+    "start": "2000-01-01",
+    "end": "2025-12-31"
+  },
+  "sample_size": 0,
+  "trend_direction": "increasing",
+  "slope": null,
+  "slope_unit": "degrees_celsius_per_decade",
+  "p_value": null,
+  "adjusted_p_value": null,
+  "confidence_interval": {
+    "lower": null,
+    "upper": null
+  },
+  "is_significant": null,
+  "method": "mann_kendall",
+  "data_quality": {},
+  "limitations": [],
+  "provenance": {}
+}
+
+Use actual calculated values in production.
+
+The schema is illustrative, not sample scientific data.
+
+## 9.5 Scientific testing
+
+Create test cases using known mathematical datasets.
+
+Include:
+
+- Clearly increasing synthetic series.
+- Clearly decreasing synthetic series.
+- Stable random series.
+- Seasonal series.
+- Autocorrelated series.
+- Missing observations.
+- Short time series.
+- Extreme outliers.
+
+Label synthetic test data clearly.
+
+Validate the implementation against trusted statistical reference cases.
+
+Deliverable:
+
+A reusable, tested scientific analysis engine.
+
+---
+
+# 10. PHASE 3 — DATABASE AND BACKEND
+
+Implement the FastAPI backend and persistent storage.
+
+## Database entities
+
+Create appropriate database models for:
+
+1. Dataset
+2. EnvironmentalVariable
+3. GeographicRegion
+4. Observation
+5. AnalysisJob
+6. TrendResult
+7. DatasetProvenance
+8. UserSavedAnalysis
+9. AIConversation, if needed
+
+Use PostgreSQL and PostGIS for geographic queries.
+
+Avoid storing huge unprocessed NetCDF files directly inside PostgreSQL.
+
+Store large raw files in appropriate object storage or process them in a controlled pipeline.
+
+## Required API endpoints
+
+### Dataset endpoints
+
+GET /api/v1/datasets
+
+GET /api/v1/datasets/{dataset_id}
+
+GET /api/v1/variables
+
+### Geographic endpoints
+
+GET /api/v1/regions
+
+GET /api/v1/regions/search
+
+GET /api/v1/regions/{region_id}
+
+POST /api/v1/regions/custom
+
+### Data endpoints
+
+GET /api/v1/data/series
+
+POST /api/v1/data/query
+
+GET /api/v1/data/metadata
+
+### Analysis endpoints
+
+POST /api/v1/analysis/trends
+
+GET /api/v1/analysis/{analysis_id}
+
+GET /api/v1/analysis/{analysis_id}/results
+
+GET /api/v1/analysis/{analysis_id}/map
+
+### Comparison endpoints
+
+POST /api/v1/analysis/compare
+
+### AI endpoints
+
+POST /api/v1/ai/ask
+
+### Export endpoints
+
+POST /api/v1/export/report
+
+GET /api/v1/export/{export_id}
+
+Use appropriate request validation, response schemas, pagination, error codes and API documentation.
+
+For long-running spatial analyses, implement background jobs with status tracking.
+
+Do not block HTTP requests while processing large datasets.
+
+Implement request caching and avoid unnecessary repeated NASA requests.
+
+Deliverable:
+
+A documented, functional backend with persistent storage and working analysis APIs.
+
+---
+
+# 11. PHASE 4 — FRONTEND AND USER EXPERIENCE
+
+Build a complete, premium-quality scientific web application.
+
+## Design direction
+
+Create a modern scientific intelligence interface.
+
+Visual direction:
+
+- Premium scientific research platform.
+- Clean, minimal layout.
+- Deep navy or near-black backgrounds where appropriate.
+- Restrained blue, cyan and green accents.
+- Strong typography.
+- Clear data hierarchy.
+- High-quality geographical visualization.
+- Professional dashboard layouts.
+- Responsive design.
+
+Avoid generic AI SaaS styling.
+
+Avoid excessive gradients and unnecessary glassmorphism.
+
+The interface should feel like a professional Earth observation and scientific analysis platform.
+
+## Main pages
+
+### A. Landing Page
+
+Create an engaging landing page explaining:
+
+- What EarthSignal does.
+- Why environmental trend detection matters.
+- How NASA data is used.
+- What users can investigate.
+- Main capabilities.
+- A clear CTA to explore Earth.
+
+Include a visually impressive interactive Earth experience where performance allows.
+
+### B. Earth Explorer
+
+Create the primary exploration interface.
+
+Features:
+
+- Interactive global map.
+- Zoom and pan.
+- Geographic search.
+- Country and regional selection.
+- Custom bounding-box selection.
+- Variable selector.
+- Dataset selector.
+- Time-period selection.
+- Analysis controls.
+
+### C. Main Dashboard
+
+Display:
+
+- Selected geographical region.
+- Environmental variable.
+- Selected dataset.
+- Historical period.
+- Trend direction.
+- Rate of change.
+- Statistical significance.
+- Confidence interval.
+- Data coverage.
+- Data source.
+
+### D. Trend Analysis
+
+Display:
+
+- Historical time-series chart.
+- Observed values.
+- Trend line.
+- Seasonal patterns where applicable.
+- Confidence intervals.
+- Statistical result.
+- Methodology.
+- Data quality indicators.
+
+### E. Global Trend Map
+
+Show spatial changes using meaningful map layers.
+
+Features:
+
+- Increasing trends.
+- Decreasing trends.
+- Statistically significant areas.
+- Insignificant areas.
+- Areas with insufficient observations.
+- Variable selection.
+- Time-period filters.
+
+Do not use a single color to represent all trend states.
+
+Add a clear legend.
+
+Ensure that geographical data is correctly aligned.
+
+### F. Regional Comparison
+
+Allow users to compare two or more regions.
+
+Display:
+
+- Time-series comparison.
+- Trend slope comparison.
+- Statistical significance.
+- Data coverage.
+- Dataset differences.
+- Scientific limitations.
+
+Do not compare incompatible units or datasets without appropriate normalization.
+
+### G. AI Earth Scientist
+
+Provide a conversational interface for exploring findings.
+
+Example questions:
+
+- Is Sindh becoming hotter?
+- How has rainfall changed over the last 20 years?
+- Which areas show significant soil moisture decline?
+- Compare Sindh and Balochistan.
+- Explain this trend in simple language.
+- What does the p-value mean?
+
+The AI must answer using actual analysis results.
+
+### H. Dataset Explorer
+
+Provide:
+
+- Dataset descriptions.
+- Variable information.
+- Temporal coverage.
+- Spatial resolution.
+- Units.
+- Data source.
+- Processing information.
+- Access links.
+- Known limitations.
+
+### I. Saved Analyses
+
+Allow users to save and revisit analytical results.
+
+### J. Reports
+
+Generate downloadable PDF and CSV reports.
+
+Reports should contain:
+
+- Selected location.
+- Selected variable.
+- Dataset information.
+- Analysis period.
+- Time-series chart.
+- Trend results.
+- Statistical significance.
+- Confidence intervals.
+- Methodology.
+- NASA attribution.
+- Limitations.
+
+Deliverable:
+
+A fully functional, responsive frontend connected to the backend.
+
+---
+
+# 12. PHASE 5 — AI EARTH SCIENTIST
+
+Build an AI assistant that makes environmental science understandable without compromising scientific accuracy.
+
+The AI must not independently invent scientific findings.
+
+## Core capabilities
+
+1. Explain detected environmental trends.
+2. Answer questions about selected regions.
+3. Explain statistical significance.
+4. Compare analytical findings.
+5. Summarize historical changes.
+6. Explain NASA dataset characteristics.
+7. Identify limitations and uncertainty.
+8. Help users investigate environmental questions.
+
+## Grounding architecture
+
+The AI must receive structured context from the backend.
+
+Context should include:
+
+- Dataset name.
+- Data provider.
+- Variable.
+- Units.
+- Geographic region.
+- Analysis period.
+- Sample size.
+- Trend direction.
+- Sen's slope.
+- P-value.
+- Adjusted p-value.
+- Confidence interval.
+- Statistical method.
+- Data quality.
+- Known limitations.
+- Provenance.
+
+The model must only interpret supplied results.
+
+If a result is unavailable, it must say so.
+
+If a user asks for an analysis that has not been performed, the assistant should request or trigger the appropriate analysis rather than inventing a result.
+
+## Example response
+
+Question:
+
+"Is Sindh becoming hotter?"
+
+The assistant should:
+
+1. Identify the temperature dataset.
+2. Identify the selected historical period.
+3. Retrieve actual trend results.
+4. Explain the slope.
+5. Explain statistical significance.
+6. Discuss uncertainty.
+7. Cite the relevant dataset and analysis.
+
+Never claim causation based only on correlation or trend detection.
+
+## AI provider abstraction
+
+Support OpenAI and Gemini through a configurable provider interface.
+
+Use environment variables for credentials.
+
+Allow the application to function without the AI integration.
+
+The scientific analysis engine must remain independent of the LLM.
+
+Deliverable:
+
+A grounded AI Earth Scientist that explains real analytical results.
+
+---
+
+# 13. PHASE 6 — ADVANCED ANALYSIS AND PRODUCT FEATURES
+
+Implement the following advanced capabilities after the core product is working.
+
+## A. Automatic Trend Discovery
+
+Allow users to select:
+
+- Region.
+- Environmental variable.
+- Historical period.
+
+The system should scan available data and identify locations with notable increasing or decreasing trends.
+
+Rank findings using transparent statistical criteria.
+
+Do not rank solely by AI-generated scores.
+
+## B. Regional Hotspot Detection
+
+Identify geographical clusters of similar environmental changes.
+
+For example:
+
+- Areas with significant warming.
+- Regions experiencing declining soil moisture.
+- Regions with changing precipitation patterns.
+
+Use appropriate spatial statistics and clearly explain the methodology.
+
+## C. Multi-variable Exploration
+
+Allow users to investigate relationships between variables.
+
+Examples:
+
+- Temperature versus precipitation.
+- Soil moisture versus precipitation.
+- Temperature versus evapotranspiration.
+
+Use correlation and other appropriate methods.
+
+Clearly distinguish association from causation.
+
+## D. Historical Comparison
+
+Compare:
+
+- Two historical periods.
+- Two geographical regions.
+- Two compatible datasets.
+
+Preserve dataset and methodological differences.
+
+## E. Automated Insights
+
+Generate short, evidence-grounded findings such as:
+
+"During the selected period, the selected dataset shows a statistically significant increasing trend in the selected region."
+
+Only generate such statements when the actual statistical results support them.
+
+## F. Downloadable Reports
+
+Generate detailed reports with charts, tables, methodology and source references.
+
+## G. Performance Optimization
+
+Implement:
+
+- Data caching.
+- Database indexing.
+- Efficient spatial queries.
+- Lazy loading.
+- Pagination.
+- Background processing.
+- Efficient raster and gridded data handling.
+- Frontend code splitting.
+
+Deliverable:
+
+An advanced scientific analysis platform with reliable discovery capabilities.
+
+---
+
+# 14. PHASE 7 — TESTING AND SCIENTIFIC VALIDATION
+
+Perform a complete audit.
+
+## Backend testing
+
+Test:
+
+- NASA integrations.
+- Data normalization.
+- Statistical algorithms.
+- API endpoints.
+- Database operations.
+- Background jobs.
+- Authentication where implemented.
+- Caching.
+- Export generation.
+
+## Frontend testing
+
+Test:
+
+- Navigation.
+- Map interactions.
+- Geographic selection.
+- Variable selection.
+- Dataset selection.
+- Date filtering.
+- Charts.
+- Regional comparison.
+- AI assistant.
+- Saved analyses.
+- Reports.
+- Mobile responsiveness.
+
+## Scientific validation
+
+This is mandatory.
+
+Verify:
+
+1. Correct data source.
+2. Correct units.
+3. Correct timestamps.
+4. Correct geographical coordinates.
+5. Correct missing-data handling.
+6. Correct aggregation.
+7. Correct trend slope.
+8. Correct p-value.
+9. Correct significance classification.
+10. Correct multiple-testing correction.
+11. Correct confidence intervals.
+12. Correct scientific interpretation.
+
+Check the results against independently calculated reference cases.
+
+Do not mark the project as complete if scientific results are fabricated or inconsistent.
+
+## Security audit
+
+Verify:
+
+- No API keys in frontend bundles.
+- No secrets committed to Git.
+- Input validation.
+- Rate limiting.
+- Secure authentication where needed.
+- CORS configuration.
+- Safe file handling.
+- SQL injection protection.
+- Error-message safety.
+
+Deliverable:
+
+A documented testing and scientific validation report.
+
+---
+
+# 15. PHASE 8 — DEPLOYMENT AND NASA HACKATHON SUBMISSION
+
+Prepare the complete project for public demonstration.
+
+## Deployment
+
+Configure:
+
+- Next.js frontend.
+- FastAPI backend.
+- PostgreSQL/PostGIS.
+- Environment variables.
+- Database migrations.
+- Production CORS.
+- API health checks.
+- Logging.
+- Error monitoring.
+- Deployment documentation.
+
+Provide a working demo URL when deployment credentials and infrastructure are available.
+
+Never claim successful deployment if it has not actually occurred.
+
+## Documentation
+
+Create:
+
+README.md
+
+PROJECT_ARCHITECTURE.md
+
+DATA_SOURCES.md
+
+SCIENTIFIC_METHODOLOGY.md
+
+API_DOCUMENTATION.md
+
+DEPLOYMENT.md
+
+ENVIRONMENT_VARIABLES.md
+
+TESTING_REPORT.md
+
+NASA_ATTRIBUTION.md
+
+## NASA Space Apps presentation
+
+Prepare:
+
+1. Project overview.
+2. Problem statement.
+3. Proposed solution.
+4. NASA datasets used.
+5. Data integration architecture.
+6. Scientific methodology.
+7. Statistical analysis demonstration.
+8. Interactive product demonstration.
+9. AI capabilities.
+10. Real-world applications.
+11. Technical challenges.
+12. Limitations.
+13. Future improvements.
+
+## Demonstration scenario
+
+Use Sindh, Pakistan as the flagship case study.
+
+Demonstrate:
+
+1. Selecting Sindh on the global map.
+2. Selecting temperature.
+3. Choosing an appropriate historical period.
+4. Retrieving real NASA data.
+5. Running trend analysis.
+6. Viewing the historical trend.
+7. Inspecting the slope and significance.
+8. Comparing the result with another region.
+9. Asking the AI Earth Scientist to explain the finding.
+10. Downloading a scientific report.
+
+All displayed scientific results must be based on actual retrieved datasets.
+
+---
+
+# 16. ENVIRONMENT CONFIGURATION
+
+Create appropriate .env.example files.
+
+Suggested configuration:
+
+FRONTEND:
+
+NEXT_PUBLIC_API_URL=
+NEXT_PUBLIC_MAP_STYLE_URL=
+
+BACKEND:
+
+DATABASE_URL=
+REDIS_URL=
+
+NASA:
+
+NASA_POWER_BASE_URL=https://power.larc.nasa.gov/api
+EARTHDATA_USERNAME=
+EARTHDATA_PASSWORD=
+
+AI:
+
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+AI_PROVIDER=
+
+Important:
+
+- Do not commit .env files.
+- Do not expose Earthdata credentials.
+- Prefer token-based authentication where supported.
+- Use secure secret storage in production.
+- Never print credentials in application logs.
+- Do not require unnecessary API keys.
+- Validate required configuration at startup.
+
+The actual application must work with the available data sources even when optional integrations are not configured.
+
+---
+
+# 17. APPLICATION STRUCTURE
+
+Maintain a clean and modular repository.
+
+Suggested monorepo:
+
+earthsignal/
+│
+├── frontend/
+│   ├── app/
+│   ├── components/
+│   │   ├── dashboard/
+│   │   ├── maps/
+│   │   ├── charts/
+│   │   ├── explorer/
+│   │   ├── ai/
+│   │   └── shared/
+│   ├── hooks/
+│   ├── lib/
+│   ├── services/
+│   ├── types/
+│   └── public/
+│
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── database/
+│   │   ├── integrations/
+│   │   │   └── nasa/
+│   │   ├── models/
+│   │   ├── schemas/
+│   │   ├── services/
+│   │   ├── analysis/
+│   │   ├── ai/
+│   │   └── utils/
+│   ├── tests/
+│   └── requirements.txt
+│
+├── docs/
+│
+├── docker-compose.yml
+├── README.md
+└── .gitignore
+
+Adapt this structure to the existing repository rather than blindly recreating everything.
+
+---
+
+# 18. MVP PRIORITIES
+
+The application must be completed in this order.
+
+## Must Have
+
+1. Real NASA data integration.
+2. Environmental variable selection.
+3. Geographical region selection.
+4. Historical time-series analysis.
+5. Mann-Kendall trend detection.
+6. Sen's slope calculation.
+7. Statistical significance.
+8. Trend visualization.
+9. Global or regional trend map supported by the actual dataset.
+10. Dataset provenance.
+11. Working dashboard.
+
+## Should Have
+
+1. AI Earth Scientist.
+2. Regional comparison.
+3. Multiple environmental variables.
+4. Automatic trend discovery.
+5. PDF reports.
+6. Dataset explorer.
+
+## Advanced
+
+1. Multi-variable spatial correlation.
+2. Spatial clustering.
+3. Advanced anomaly detection.
+4. Additional NASA mission integrations.
+5. More sophisticated global trend discovery.
+
+Do not spend the majority of development time on advanced features before the mandatory scientific workflow works.
+
+---
+
+# 19. CRITICAL DEVELOPMENT RULES
+
+Follow these rules throughout the entire project.
+
+### Scientific Accuracy
+
+- Never fabricate NASA data.
+- Never fabricate p-values.
+- Never fabricate statistical significance.
+- Never invent dataset coverage.
+- Never misrepresent model outputs as direct observations.
+- Never confuse temperature anomalies with absolute temperatures.
+- Never infer local climate trends from global averages.
+- Never claim a relationship is causal based only on correlation.
+- Always display units.
+- Always document uncertainty.
+- Always preserve source attribution.
+
+### Engineering Quality
+
+- Use clean architecture.
+- Use reusable components.
+- Use strict TypeScript.
+- Use Python type hints.
+- Validate inputs.
+- Handle errors properly.
+- Avoid duplicated business logic.
+- Avoid hardcoded scientific results.
+- Avoid unnecessary dependencies.
+- Write automated tests.
+- Keep frontend and backend responsibilities separate.
+
+### User Experience
+
+- Do not create dead buttons.
+- Do not use placeholder charts that appear to represent real NASA results.
+- Clearly distinguish loading, unavailable and insufficient-data states.
+- Show users where the data comes from.
+- Explain technical terminology in understandable language.
+- Make the product responsive.
+
+### Development Workflow
+
+- Complete phases sequentially.
+- Run tests after every major implementation.
+- Fix errors before moving forward.
+- Maintain project documentation.
+- Update the README as the project evolves.
+- Record architectural decisions.
+- Do not abandon existing working features.
+- Do not report tasks as completed unless they have actually been verified.
+
+---
+
+# 20. FINAL SUCCESS CRITERIA
+
+EarthSignal is considered complete only when:
+
+1. A user can select a geographical region.
+2. A user can select a supported environmental variable.
+3. The system retrieves real NASA data.
+4. The system processes the observations correctly.
+5. The statistical engine analyzes the historical series.
+6. The application calculates trend direction.
+7. The application calculates the magnitude of change.
+8. The application tests statistical significance.
+9. The application communicates uncertainty.
+10. The application visualizes geographical changes where gridded data supports them.
+11. The application supports regional comparison.
+12. The AI assistant explains actual analytical findings.
+13. The application displays NASA data provenance.
+14. The application generates a downloadable scientific report.
+15. The complete workflow is tested and demonstrable.
+
+---
+
+# 21. YOUR FIRST ACTION
+
+Begin by inspecting the existing repository.
+
+Then execute all eight phases sequentially.
+
+Start with repository discovery and NASA dataset verification.
+
+Prioritize NASA POWER for the initial working API integration, GISTEMP for historical temperature analysis, and GLDAS for land-surface variables.
+
+Verify the current access method for every NASA dataset before writing its connector.
+
+Do not build the frontend around fabricated data.
+
+Do not stop after Phase 0.
+
+Continue through implementation, scientific testing, integration, deployment preparation and final documentation.
+
+If an external credential is unavailable, complete all work possible without it, clearly document the missing credential, and provide exact setup instructions.
+
+At the end of each phase, report:
+
+- What was implemented.
+- Files created.
+- Files modified.
+- Tests executed.
+- Test results.
+- Known limitations.
+- Next phase.
+
+**FINAL OBJECTIVE: Deliver a complete, working, scientifically credible Earth intelligence platform that directly satisfies the NASA Space Apps Challenge 2026 — Be An Earth System Trend Detective!**
